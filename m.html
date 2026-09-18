@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sổ chung — Duy &amp; Nguyen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="m.css" />
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div class="login-wrap" id="loginView">
+  <form class="login" id="loginForm" autocomplete="on">
+    <div class="brand">
+      <div class="mark"><span></span></div>
+      <h1>Sổ chung<small>Duy &amp; Nguyen</small></h1>
+    </div>
+    <div id="loginErr"></div>
+    <div class="field">
+      <label for="u">Tên đăng nhập</label>
+      <input class="input" id="u" name="username" autocapitalize="none" autocomplete="username" spellcheck="false" />
+    </div>
+    <div class="field">
+      <label for="p">Mật khẩu</label>
+      <input class="input" id="p" name="password" type="password" autocomplete="current-password" />
+    </div>
+    <button class="btn primary wide" id="loginBtn" type="submit">Đăng nhập</button>
+    <p class="hint">Chỉ hai tài khoản <b>duy</b> và <b>nguyen</b> được phép dùng. Không có đăng ký.</p>
+  </form>
+</div>
+
+<!-- ============ APP ============ -->
+<div class="app" id="appView">
+  <aside class="side">
+    <div class="brand">
+      <div class="mark"><span></span></div>
+      <h1>Sổ chung<small id="sideBal">—</small></h1>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="side-foot">
+      <div class="who">
+        <div class="avatar" id="meAv">–</div>
+        <div><b id="meName">–</b><small id="meRole">–</small></div>
+      </div>
+      <button class="btn sm wide" style="margin-top:10px" onclick="logout()">Đăng xuất</button>
+    </div>
+  </aside>
+  <main id="main"></main>
+  <nav class="mobile-nav" id="mnav"></nav>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script src="m.js" defer></script>
+</body>
+</html>

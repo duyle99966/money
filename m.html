@@ -58,45 +58,6 @@
 <script src="m.js" defer></script>
   <script type="module">
   <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-analytics.js";
-  
-  // 1. Import thêm các hàm cần thiết từ Realtime Database
-  import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyDkVBjLD4FVKWL2wkAeM48Q-8PKJVV1c6c",
-    authDomain: "money-3273d.firebaseapp.com",
-    databaseURL: "https://money-3273d-default-rtdb.firebaseio.com",
-    projectId: "money-3273d",
-    storageBucket: "money-3273d.firebasestorage.app",
-    messagingSenderId: "798055443947",
-    appId: "1:798055443947:web:440305518c32c609f2fdae",
-    measurementId: "G-C27MKKBNPL"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const analytics = getAnalytics(app);
-
-  // 2. Khởi tạo Database
-  const database = getDatabase(app);
-
-  // 3. Viết thử một hàm để lưu dữ liệu
-  function ghiDuLieuThu() {
-    set(ref(database, 'test_node/1'), {
-      thongBao: "Dữ liệu đã được lưu thành công!"
-    })
-    .then(() => {
-      console.log("Lưu dữ liệu thành công!");
-    })
-    .catch((error) => {
-      console.error("Lỗi khi lưu dữ liệu: ", error);
-    });
-  }
-
-  // Gọi hàm chạy thử
-  ghiDuLieuThu();
-</script>
-  
+ 
 </body>
 </html>

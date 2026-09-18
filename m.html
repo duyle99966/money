@@ -56,6 +56,30 @@
 <div id="toastRoot"></div>
 
 <script src="m.js" defer></script>
+  <script type="module">
+  // Import the functions you need from the SDKs you need
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-analytics.js";
+  // TODO: Add SDKs for Firebase products that you want to use
+  // https://firebase.google.com/docs/web/setup#available-libraries
+
+  // Your web app's Firebase configuration
+  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+  const firebaseConfig = {
+    apiKey: "AIzaSyDkVBjLD4FVKWL2wkAeM48Q-8PKJVV1c6c",
+    authDomain: "money-3273d.firebaseapp.com",
+    databaseURL: "https://money-3273d-default-rtdb.firebaseio.com",
+    projectId: "money-3273d",
+    storageBucket: "money-3273d.firebasestorage.app",
+    messagingSenderId: "798055443947",
+    appId: "1:798055443947:web:440305518c32c609f2fdae",
+    measurementId: "G-C27MKKBNPL"
+  };
+
+  // Initialize Firebase
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+</script>
   
 </body>
 </html>

@@ -55,32 +55,53 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
+<script type="module">
+  // Kết nối thật vào Firebase Realtime Database — đây là nơi Store trong m.js
+  // sẽ đọc/ghi dữ liệu, thay vì chỉ dùng localStorage của từng máy.
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+  import { getDatabase, ref, set, get, remove, onValue }
+    from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDkVBjLD4FVKWL2wkAeM48Q-8PKJVV1c6c",
+    authDomain: "money-3273d.firebaseapp.com",
+    databaseURL: "https://money-3273d-default-rtdb.firebaseio.com",
+    projectId: "money-3273d",
+    storageBucket: "money-3273d.firebasestorage.app",
+    messagingSenderId: "798055443947",
+    appId: "1:798055443947:web:440305518c32c609f2fdae",
+    measurementId: "G-C27MKKBNPL"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const rtdb = getDatabase(app);
+
+  // Adapter có cùng "hình dạng" mà Store trong m.js đang mong đợi
+  // (doc().set/get/delete, collection().onSnapshot) — nhờ vậy không cần
+  // sửa lại toàn bộ logic đọc/ghi trong m.js.
+  window.FIREBASE_STORE = {
+    doc(path){
+      const r = ref(rtdb, path);
+      return {
+        async set(data){ await set(r, data); },
+        async get(){ const snap = await get(r); return { exists: snap.exists(), data: snap.val() }; },
+        async delete(){ await remove(r); }
+      };
+    },
+    collection(path){
+      const r = ref(rtdb, path);
+      return {
+        onSnapshot(cb, errCb){
+          return onValue(r, snap => {
+            const val = snap.val() || {};
+            cb({ docs: Object.entries(val).map(([id, data]) => ({ id, data })) });
+          }, err => { if (errCb) errCb(err); });
+        }
+      };
+    }
+  };
+</script>
 <script src="m.js" defer></script>
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-    import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-analytics.js";
-    // Thêm thư viện Database để lưu trữ dữ liệu
-    import { getDatabase, ref, set, push, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyDkVBjLD4FVKWL2wkAeM48Q-8PKJVV1c6c",
-      authDomain: "money-3273d.firebaseapp.com",
-      databaseURL: "https://money-3273d-default-rtdb.firebaseio.com",
-      projectId: "money-3273d",
-      storageBucket: "money-3273d.firebasestorage.app",
-      messagingSenderId: "798055443947",
-      appId: "1:798055443947:web:440305518c32c609f2fdae",
-      measurementId: "G-C27MKKBNPL"
-    };
-
-    // Khởi tạo Firebase
-    const app = initializeApp(firebaseConfig);
-    const analytics = getAnalytics(app);
-    const database = getDatabase(app); // Gọi database ra để sử dụng
-
-    // Code xử lý đăng nhập hoặc lưu dữ liệu của bạn sẽ viết tiếp ở dưới này
-  </script>
- 
- 
 </body>
 </html>

@@ -1,8 +1,10 @@
 /* =========================================================================
    Sổ chung — ứng dụng chia đôi chi tiêu cho đúng hai người.
    Mọi số tiền là số nguyên VND. Không dùng float cho tiền.
-   Lưu trữ: capability `db` của artifact (chia sẻ giữa hai người);
-   nếu không có thì rơi về localStorage (chỉ máy hiện tại).
+   Lưu trữ: capability `db` của artifact nếu có (môi trường Claude);
+   nếu không thì dùng Firebase Realtime Database (window.FIREBASE_STORE,
+   khởi tạo trong index.html) — chia sẻ dữ liệu thật giữa Duy & Nguyen;
+   nếu cả hai đều không có thì mới rơi về localStorage (chỉ máy hiện tại).
    ========================================================================= */
 
 const PEOPLE = {
@@ -39,6 +41,7 @@ const Store = {
   db:null, local:{txns:{},settlements:{},activity:{},config:{}},
   async init(){
     try { this.db = await claude.use('db'); } catch(e){ this.db = null; }
+    if (!this.db && window.FIREBASE_STORE) this.db = window.FIREBASE_STORE;
     if (!this.db){
       try { this.local = JSON.parse(localStorage.getItem(LS)) || this.local; } catch(e){}
     }

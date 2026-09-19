@@ -28,7 +28,7 @@
       <input class="input" id="p" name="password" type="password" autocomplete="current-password" />
     </div>
     <button class="btn primary wide" id="loginBtn" type="submit">Đăng nhập</button>
-    <p class="hint">Chỉ hai tài khoản <b>duy</b> và <b>nguyen</b> được phép dùng. Không có đăng ký.</p>
+    <p class="hint">Chỉ tài khoản do quản trị viên cấp mới đăng nhập được. Không có đăng ký.</p>
   </form>
 </div>
 
@@ -41,7 +41,10 @@
     </div>
     <nav class="nav" id="nav"></nav>
     <div class="side-foot">
-      <div class="who">
+      <button class="chat-btn" id="chatToggle" onclick="openChat()">
+        <span>Tin nhắn</span><span class="badge" id="chatBadge" style="display:none">0</span>
+      </button>
+      <div class="who" style="margin-top:12px">
         <div class="avatar" id="meAv">–</div>
         <div><b id="meName">–</b><small id="meRole">–</small></div>
       </div>
@@ -50,9 +53,13 @@
   </aside>
   <main id="main"></main>
   <nav class="mobile-nav" id="mnav"></nav>
+  <button class="chat-fab" id="chatFab" onclick="openChat()" aria-label="Tin nhắn">
+    ✉<span class="badge" id="chatBadgeFab" style="display:none">0</span>
+  </button>
 </div>
 
 <div id="modalRoot"></div>
+<div id="chatRoot"></div>
 <div id="toastRoot"></div>
 
 <script type="module">
@@ -101,7 +108,7 @@
     }
   };
 </script>
-<script src="m.js" defer></script>
+<script src="m.js?v=5" defer></script>
 
 </body>
 </html>

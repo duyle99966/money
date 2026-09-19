@@ -413,6 +413,7 @@ const NAV = [
   {p:'dashboard',   t:'Tổng quan',   m:'Tổng quan'},
   {p:'friends',     t:'Kết bạn',     m:'Kết bạn'},
   {p:'transactions',t:'Giao dịch',   m:'Giao dịch'},
+  {p:'stats',       t:'Thống kê',    m:'Thống kê'},
   {p:'new',         t:'Tạo giao dịch',m:null},
   {p:'settlements', t:'Cân nợ',      m:'Cân nợ'},
   {p:'history',     t:'Lịch sử trả', m:null},
@@ -453,7 +454,7 @@ function render(){
     return;
   }
 
-  const fn = ({dashboard:vDashboard,friends:vFriends,transactions:vTransactions,detail:vDetail,new:vNew,
+  const fn = ({dashboard:vDashboard,stats:vStats,friends:vFriends,transactions:vTransactions,detail:vDetail,new:vNew,
                settlements:vSettlements,history:vHistory,activity:vActivity,
                settings:vSettings,admin:vAdmin})[route.path] || vDashboard;
   el('main').innerHTML = fn();
@@ -523,6 +524,14 @@ function vDashboard(){
   </div>
 
   <section class="section panel">
+    <div class="panel-head">
+      <h3>Chi tiêu 6 tháng gần nhất</h3>
+      <a class="btn sm" href="#/stats">Xem thống kê</a>
+    </div>
+    <div class="body">${svgBars(statsMonthly(lastMonths(6)))}</div>
+  </section>
+
+  <section class="section panel">
     <h3>Giao dịch gần đây</h3>
     ${recent.length ? `<div class="tbl-wrap">${txnTable(recent)}</div>`
       : `<div class="empty"><b>Chưa có giao dịch nào</b>Ghi khoản đầu tiên để bắt đầu theo dõi.</div>`}
@@ -530,6 +539,185 @@ function vDashboard(){
 }
 const stat = (k,v,cls) => `<div class="stat"><div class="k">${esc(k)}</div>
   <div class="v ${cls||''}">${typeof v==='number'?v:v}</div></div>`;
+
+/* =========================================================================
+   MỤC 6 — Biểu đồ thống kê.
+   Dùng SVG thuần thay vì Chart.js: render() thay sạch innerHTML sau mỗi
+   snapshot Firebase, nên biểu đồ canvas sẽ phải destroy/khởi tạo lại liên
+   tục (rò rỉ instance). SVG là chuỗi thuần, vẽ lại bao nhiêu lần cũng được,
+   ăn trực tiếp biến màu trong m.css và co giãn theo viewBox — hợp luôn với
+   ràng buộc "không phần tử nào rộng hơn màn hình" ở mục 5.
+   ========================================================================= */
+
+// Rút gọn tiền cho nhãn trục: 1.250.000 -> "1,3 tr"
+function shortVnd(n){
+  const a = Math.abs(n);
+  if (a >= 1e9) return (n/1e9).toFixed(a >= 1e10 ? 0 : 1).replace('.', ',') + ' tỷ';
+  if (a >= 1e6) return (n/1e6).toFixed(a >= 1e7 ? 0 : 1).replace('.', ',') + ' tr';
+  if (a >= 1e3) return Math.round(n/1e3) + 'k';
+  return String(Math.round(n));
+}
+// 6 tháng gần nhất, cũ -> mới, dạng ['2026-04', ...]
+function lastMonths(n){
+  const out = [], d = new Date();
+  for (let i = n-1; i >= 0; i--){
+    const x = new Date(d.getFullYear(), d.getMonth()-i, 1);
+    out.push(x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0'));
+  }
+  return out;
+}
+const mLabel = m => 'T' + parseInt(m.slice(5), 10);
+
+/* ---- dữ liệu cho từng biểu đồ (chỉ trong sổ đang mở) ---- */
+function statsMonthly(months){
+  const list = myTxns();
+  return months.map(m => ({
+    label: mLabel(m),
+    value: list.filter(t => (t.date||'').startsWith(m)).reduce((a,t)=>a+t.amount, 0)
+  }));
+}
+function statsByCat(){
+  const sum = {};
+  for (const t of myTxns()){
+    const c = CATEGORIES.includes(t.category) ? t.category : 'Other';
+    sum[c] = (sum[c]||0) + t.amount;
+  }
+  return CATEGORIES
+    .map((c,i) => ({ label: CAT_VI[c], value: sum[c]||0, i: i+1 }))
+    .filter(s => s.value > 0);
+}
+// Số dư ròng tại thời điểm cuối mỗi tháng (dương = peer nợ tôi).
+// Cộng dồn đúng theo cách netBalance() tính: nợ gốc từ txns, trừ dần theo settlements.
+function netSeries(months){
+  const ev = [];
+  for (const t of myTxns())
+    ev.push({ d:(t.date || t.created_at || '').slice(0,10),
+              v:(t.paid_by === me.username ? 1 : -1) * owedOf(t) });
+  for (const s of mySettlements())
+    ev.push({ d:(s.created_at || '').slice(0,10),
+              v:(s.to_user === me.username ? -1 : 1) * s.amount });
+  return months.map(m => {
+    const end = m + '-31';
+    let sum = 0;
+    for (const e of ev) if (e.d && e.d <= end) sum += e.v;
+    return { label: mLabel(m), value: sum };
+  });
+}
+
+/* ---- vẽ SVG ---- */
+function svgBars(rows){
+  if (!rows.some(r => r.value)) return `<div class="empty">Chưa có chi tiêu nào trong 6 tháng gần đây.</div>`;
+  const W=640, H=230, padL=10, padR=10, padT=28, padB=30, base=H-padB;
+  const max = Math.max(1, ...rows.map(r=>r.value));
+  const iw = (W-padL-padR)/rows.length, bw = Math.min(56, iw*0.5);
+  const grid = [0,.5,1].map(f=>{
+    const y = padT + (1-f)*(base-padT);
+    return `<line x1="${padL}" x2="${W-padR}" y1="${y}" y2="${y}" class="c-grid"/>`;
+  }).join('');
+  const bars = rows.map((r,i)=>{
+    const h = r.value ? Math.max(3, (r.value/max)*(base-padT)) : 0;
+    const x = padL + i*iw + (iw-bw)/2, y = base - h;
+    return `<g>
+      <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="5" class="c-bar"/>
+      ${r.value ? `<text x="${(x+bw/2).toFixed(1)}" y="${(y-8).toFixed(1)}" class="c-val">${shortVnd(r.value)}</text>` : ''}
+      <text x="${(x+bw/2).toFixed(1)}" y="${base+18}" class="c-lab">${r.label}</text></g>`;
+  }).join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img"
+    aria-label="Tổng chi theo tháng">${grid}${bars}</svg>`;
+}
+
+function svgDonut(slices){
+  if (!slices.length) return `<div class="empty">Chưa có dữ liệu danh mục.</div>`;
+  const W=260, H=260, cx=130, cy=130, r=92, sw=30;
+  const total = slices.reduce((a,s)=>a+s.value, 0) || 1;
+  const C = 2*Math.PI*r;
+  let off = 0;
+  const arcs = slices.map(s=>{
+    const raw = C * (s.value/total);
+    const len = Math.max(1, raw - (slices.length > 1 ? 2 : 0));   // chừa khe nhỏ giữa các lát
+    const seg = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke-width="${sw}"
+      class="c-s${s.i}" stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}"
+      stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    off += raw;
+    return seg;
+  }).join('');
+  return `<svg class="chart donut" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img"
+    aria-label="Tỉ lệ chi theo danh mục">${arcs}
+    <text x="${cx}" y="${cy-2}" class="c-center">${shortVnd(total)}</text>
+    <text x="${cx}" y="${cy+18}" class="c-lab">tổng chi</text></svg>`;
+}
+
+function svgLine(rows){
+  if (!rows.length) return `<div class="empty">Chưa có dữ liệu.</div>`;
+  const W=640, H=230, padL=10, padR=10, padT=26, padB=30;
+  const vals = rows.map(r=>r.value);
+  let min = Math.min(0, ...vals), max = Math.max(0, ...vals);
+  if (min === max) max = min + 1;
+  const pad = (max-min) * 0.12;
+  min -= pad; max += pad;
+  const X = i => padL + i*(W-padL-padR)/Math.max(1, rows.length-1);
+  const Y = v => padT + (1-(v-min)/(max-min))*(H-padT-padB);
+  const pts = rows.map((r,i)=>`${X(i).toFixed(1)},${Y(r.value).toFixed(1)}`).join(' ');
+  const zero = Y(0).toFixed(1);
+  const dots = rows.map((r,i)=>`<circle cx="${X(i).toFixed(1)}" cy="${Y(r.value).toFixed(1)}" r="3.5" class="c-dot"/>
+    <text x="${X(i).toFixed(1)}" y="${H-10}" class="c-lab">${r.label}</text>`).join('');
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img"
+    aria-label="Số dư ròng theo thời gian">
+    <line x1="${padL}" x2="${W-padR}" y1="${zero}" y2="${zero}" class="c-zero"/>
+    <polygon class="c-area" points="${padL},${zero} ${pts} ${W-padR},${zero}"/>
+    <polyline class="c-line" points="${pts}"/>
+    ${dots}
+    <text x="${padL}" y="${(+zero)-6}" class="c-lab" style="text-anchor:start">0</text>
+  </svg>`;
+}
+
+/* ---- trang Thống kê ---- */
+function vStats(){
+  if (!peer) return noPeerView('Thống kê');
+  const months = lastMonths(6);
+  const bars = statsMonthly(months);
+  const cats = statsByCat();
+  const net  = netSeries(months);
+  const sum6 = bars.reduce((a,r)=>a+r.value, 0);
+  const best = [...cats].sort((a,b)=>b.value-a.value)[0];
+  const s = myStats();
+  return `
+  <div class="page-head"><div><h2>Thống kê</h2>
+    <p>Sổ chung với ${esc(nameOf(peer))} · ${months[0]} → ${months[5]}</p></div>
+    <div class="actions"><a class="btn" href="#/transactions">Xem giao dịch</a></div></div>
+  ${peerBar()}
+
+  <div class="grid cards">
+    ${stat('Chi 6 tháng', vnd(sum6))}
+    ${stat('Trung bình / tháng', vnd(Math.round(sum6/6)))}
+    ${stat('Danh mục lớn nhất', best ? best.label : '—')}
+    ${stat('Số dư hiện tại', vnd(Math.abs(netBalance())), netBalance() === 0 ? '' : (netBalance() > 0 ? 'credit' : 'debit'))}
+  </div>
+
+  <section class="section panel">
+    <h3>Tổng chi theo tháng</h3>
+    <div class="body">${svgBars(bars)}</div>
+  </section>
+
+  <div class="section chart-grid">
+    <section class="panel">
+      <h3>Tỉ lệ chi theo danh mục</h3>
+      <div class="body">
+        ${svgDonut(cats)}
+        ${cats.length ? `<div class="legend">${cats.map(c=>
+          `<span><i class="lg lg-${c.i}"></i>${esc(c.label)} · <b class="num">${vnd(c.value)}</b></span>`).join('')}</div>` : ''}
+      </div>
+    </section>
+    <section class="panel">
+      <h3>Số dư ròng theo thời gian</h3>
+      <div class="body">
+        ${svgLine(net)}
+        <p class="hint" style="margin-top:10px">Trên vạch 0 nghĩa là ${esc(nameOf(peer))} đang nợ bạn;
+        dưới vạch 0 là bạn đang nợ. Phần của bạn tới nay: <b class="num">${vnd(s.share)}</b>.</p>
+      </div>
+    </section>
+  </div>`;
+}
 
 /* ---- transactions ---- */
 function txnTable(list){
@@ -1049,6 +1237,71 @@ async function respondFriend(id, accept){
 }
 
 /* ---- admin ---- */
+/* =========================================================================
+   MIGRATION 1 LẦN + BACKUP (phần cuối của spec)
+   - Mục 1 & 2 đã có ensureLegacyUsers() / ensureLegacyFriendship().
+   - Còn lại: gán pair_id "duy_nguyen" cho mọi txns/settlements cũ.
+   Chỉ ADMIN chạy, chỉ 1 lần, có cờ `config/migration` trên DB để các máy
+   khác không chạy lại. Thuần cộng thêm field — không xóa, không đổi kiểu.
+   ========================================================================= */
+let _migRan = false;
+async function readConfigDoc(id){
+  if (Store.db){
+    try { const d = await Store.db.doc('config/'+id).get(); return d.exists ? d.data : null; }
+    catch(e){ return null; }
+  }
+  return (Store.local.config||{})[id] || null;
+}
+async function migratePairIds(silent){
+  if (_migRan) return; _migRan = true;
+  if (!isAdmin()) return;
+  const flag = await readConfigDoc('migration');
+  if (flag && flag.pair_id_v1) return;
+  const n = await runPairIdBackfill();
+  await Store.set('config', 'migration',
+    { ...(flag||{}), pair_id_v1:true, at:now(), by:me.username, patched:n });
+  if (!silent && n) toast(`Migration: đã gán pair_id cho ${n} bản ghi cũ`);
+}
+async function runPairIdBackfill(){
+  let n = 0;
+  for (const t of Data.txns){
+    if (t.pair_id) continue;
+    const b = {...t}; delete b.id;
+    await Store.set('txns', t.id, { ...b, pair_id:'duy_nguyen' }); n++;
+  }
+  for (const s of Data.settlements){
+    if (s.pair_id) continue;
+    const b = {...s}; delete b.id;
+    await Store.set('settlements', s.id, { ...b, pair_id:'duy_nguyen' }); n++;
+  }
+  return n;
+}
+// Nút thủ công trong trang Quản trị (chạy lại được, bỏ qua cờ).
+async function forceMigrate(){
+  if (!isAdmin()) return toast('Chỉ quản trị viên');
+  const n = await runPairIdBackfill();
+  const flag = await readConfigDoc('migration');
+  await Store.set('config', 'migration', { ...(flag||{}), pair_id_v1:true, at:now(), by:me.username, patched:n });
+  toast(n ? `Đã gán pair_id cho ${n} bản ghi` : 'Mọi bản ghi đã có pair_id');
+  render();
+}
+// Backup: tải toàn bộ dữ liệu đang có về máy dưới dạng JSON, chạy TRƯỚC khi migrate.
+function exportBackup(){
+  const dump = {
+    exported_at: now(), exported_by: me ? me.username : null,
+    users: Data.users, friendships: Data.friendships,
+    txns: Data.txns, settlements: Data.settlements,
+    messages: Data.messages, activity: Data.activity
+  };
+  const blob = new Blob([JSON.stringify(dump, null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `sochung-backup-${todayISO()}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+  toast('Đã tải file backup JSON');
+}
+
 function vAdmin(){
   if (!isAdmin()) return `<div class="panel"><div class="empty"><b>Trang chỉ dành cho quản trị viên</b>
     Tài khoản của bạn không có quyền truy cập.</div></div>`;
@@ -1078,8 +1331,8 @@ function vAdmin(){
   <section class="section panel"><h3>Tất cả giao dịch</h3>
     ${Data.txns.length?`<div class="tbl-wrap">${txnTable(sortedTxns())}</div>`:`<div class="empty">Chưa có dữ liệu.</div>`}</section>
   <section class="section panel">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-      <h3 style="margin:0">Tài khoản</h3>
+    <div class="panel-head">
+      <h3>Tài khoản</h3>
       <button class="btn sm" onclick="openCreateUser()">+ Tạo tài khoản</button>
     </div>
     <div class="body">${Data.users.length ? `<div class="tbl-wrap"><table>
@@ -1091,6 +1344,25 @@ function vAdmin(){
         <td>${u.must_change_pw?'<span class="tag">Chờ đổi mật khẩu</span>':'<span class="tag">Hoạt động</span>'}</td></tr>`).join('')}
       </tbody></table></div>`
       : `<div class="empty">Chưa tải được danh sách tài khoản.</div>`}</div>
+  </section>
+
+  <section class="section panel">
+    <h3>Dữ liệu &amp; bảo trì</h3>
+    <div class="body">
+      <p class="hint" style="margin-top:0">Tải backup JSON trước khi chạy migration. Migration chỉ
+      <b>thêm</b> field <span class="tag">pair_id</span> cho giao dịch/thanh toán cũ (mặc định
+      <span class="tag">duy_nguyen</span>) — không xóa, không đổi bản ghi nào.</p>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn" onclick="exportBackup()">Tải backup JSON</button>
+        <button class="btn" onclick="forceMigrate()">Chạy migration pair_id</button>
+      </div>
+      <div class="preview" style="margin-top:14px">
+        <div class="row"><span>Giao dịch thiếu pair_id</span><b class="num">${Data.txns.filter(t=>!t.pair_id).length}</b></div>
+        <div class="row"><span>Thanh toán thiếu pair_id</span><b class="num">${Data.settlements.filter(s=>!s.pair_id).length}</b></div>
+        <div class="row"><span>Tài khoản</span><b class="num">${Data.users.length}</b></div>
+        <div class="row"><span>Quan hệ bạn bè</span><b class="num">${Data.friendships.length}</b></div>
+      </div>
+    </div>
   </section>`;
 }
 function openCreateUser(){
@@ -1186,6 +1458,8 @@ async function startApp(user){
   Store.watch('users', rows => { applyUsers(rows); render(); });
   Store.watch('friendships', rows => { Data.friendships = rows; maybeAutoSelectPeer(); render(); });
   Store.watch('messages', rows => { Data.messages = rows; render(); });
+  // đợi snapshot đầu tiên về rồi mới backfill pair_id (chỉ admin, chỉ 1 lần)
+  setTimeout(() => { migratePairIds(true).catch(()=>{}); }, 4000);
 }
 
 el('loginForm').addEventListener('submit', async e => {
@@ -1210,4 +1484,63 @@ el('loginForm').addEventListener('submit', async e => {
     const user = await getUserDoc(s.u);
     if (user) startApp(user);
   }
+})();
+
+/* =========================================================================
+   MỤC 4 (bản sửa) — pressFX: trạng thái "đang nhấn" do JS điều khiển.
+
+   Vì sao bản CSS-only trước đó không chạy:
+   1) Trên iOS/Safari, :active chỉ kích hoạt khi phần tử (hoặc tổ tiên) có
+      listener chạm; Chrome Android thì hoãn :active rồi hủy khi nghi ngờ
+      người dùng đang cuộn -> nhấn nút hầu như không thấy phản hồi.
+   2) Gần như mọi chip/tab/nút đều gọi render() ngay trong onclick, mà
+      render() thay sạch innerHTML của #main -> phần tử đang nhấn bị xóa
+      giữa chừng, animation "thả tay" không bao giờ có cơ hội chạy.
+   Cách xử lý: bắt pointerdown/pointerup ủy quyền ở document (nên vẫn đúng
+   sau mỗi lần re-render), và hoãn render() vài trăm ms trong lúc đang nhấn.
+   ========================================================================= */
+(function pressFX(){
+  const SEL = '.btn,.chip,.chat-btn,.chat-fab,.chat-thread,.nav a,.mobile-nav a,.x,.chat-back,tr.row';
+  const HOLD = 240;            // ms giữ DOM sau khi thả tay để animation chạy hết
+  let cur = null, busy = false, pending = false, timer = 0;
+
+  // Bọc render(): trong lúc đang nhấn thì dồn lại, thả tay xong mới vẽ.
+  const baseRender = window.render;
+  window.render = function(){
+    if (busy){ pending = true; return; }
+    baseRender();
+  };
+  function flush(){
+    busy = false;
+    if (pending){ pending = false; baseRender(); }
+  }
+
+  function down(node){
+    if (cur) cur.classList.remove('is-press');
+    cur = node; busy = true;
+    clearTimeout(timer);
+    node.classList.add('is-press');
+  }
+  function up(){
+    if (!cur && !busy) return;
+    if (cur) cur.classList.remove('is-press');
+    cur = null;
+    clearTimeout(timer);
+    timer = setTimeout(flush, HOLD);
+  }
+
+  document.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const start = e.target && e.target.nodeType === 1 ? e.target : (e.target && e.target.parentElement);
+    const node = start && start.closest ? start.closest(SEL) : null;
+    if (!node) return;
+    if (node.disabled || node.getAttribute('aria-disabled') === 'true') return;
+    down(node);
+  }, true);
+
+  ['pointerup','pointercancel'].forEach(ev =>
+    document.addEventListener(ev, up, true));
+  // cuộn trang = không còn là cú nhấn
+  window.addEventListener('scroll', () => { if (cur) up(); }, true);
+  window.addEventListener('blur', up);
 })();

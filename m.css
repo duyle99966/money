@@ -102,9 +102,14 @@ button,input,select,textarea{font:inherit;color:inherit}
 .input:hover{border-color:var(--line-glow)}
 .input:focus{border-color:var(--gold);outline:none;box-shadow:0 0 0 3px rgba(201,161,95,.14)}
 .btn{position:relative;overflow:hidden;text-decoration:none;display:inline-block;background:var(--panel-2);border:1px solid var(--line);border-radius:var(--r);
-  padding:9px 14px;cursor:pointer;font-weight:500;transition:background .2s,border-color .2s,box-shadow .2s,transform .2s var(--ease)}
+  padding:9px 14px;cursor:pointer;font-weight:500;-webkit-tap-highlight-color:transparent;
+  transition:background .2s,border-color .2s,box-shadow .2s,transform 120ms cubic-bezier(.34,1.56,.64,1)}
 .btn:hover{background:#202329;border-color:var(--line-glow)}
-.btn:active{transform:translateY(1px)}
+.btn:active{transform:scale(.96)}
+/* Lớp sáng mờ dần khi nhấn, kiểu highlight nút iOS — không đụng màu nền/viền/chữ hiện có. */
+.btn::before{content:"";position:absolute;inset:0;border-radius:inherit;background:rgba(255,255,255,.16);
+  opacity:0;pointer-events:none;transition:opacity .28s ease-out}
+.btn:active::before{opacity:.15;transition:opacity .06s ease-in}
 .btn[disabled]{opacity:.55;cursor:not-allowed}
 .btn.primary{background:linear-gradient(180deg,var(--gold-2),var(--gold));border-color:var(--gold);color:#04141C;font-weight:600;
   box-shadow:0 6px 18px -12px rgba(201,161,95,.4)}
@@ -234,9 +239,14 @@ main{padding:26px 30px 90px;max-width:1120px;position:relative}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
 .toolbar .input{width:auto;min-width:200px;flex:1}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
-.chip{border:1px solid var(--line);background:transparent;border-radius:999px;padding:5px 12px;font-size:13px;
-  color:var(--muted);cursor:pointer;transition:border-color .2s,color .2s,background .2s,box-shadow .2s}
+.chip{position:relative;overflow:hidden;border:1px solid var(--line);background:transparent;border-radius:999px;padding:5px 12px;font-size:13px;
+  color:var(--muted);cursor:pointer;-webkit-tap-highlight-color:transparent;
+  transition:border-color .2s,color .2s,background .2s,box-shadow .2s,transform 120ms cubic-bezier(.34,1.56,.64,1)}
 .chip:hover{border-color:var(--line-glow);color:var(--text)}
+.chip:active{transform:scale(.96)}
+.chip::before{content:"";position:absolute;inset:0;border-radius:inherit;background:rgba(255,255,255,.16);
+  opacity:0;pointer-events:none;transition:opacity .28s ease-out}
+.chip:active::before{opacity:.15;transition:opacity .06s ease-in}
 .chip.on{background:rgba(201,161,95,.10);color:var(--gold-2);border-color:rgba(201,161,95,.45);
   box-shadow:0 0 12px -2px rgba(201,161,95,.35)}
 .tbl-wrap{overflow-x:auto}
@@ -369,6 +379,141 @@ td .meta{color:var(--dim);font-size:12.5px;font-family:var(--mono)}
   .chat-fab{display:flex}
 }
 
+
+/* =========================================================================
+   MỤC 4 (bản sửa) — Hiệu ứng nhấn kiểu Apple
+   Trước đây chỉ dựa vào :active nên gần như không thấy gì trên điện thoại.
+   Nay trạng thái nhấn do JS gắn class .is-press (xem pressFX trong m.js),
+   :active giữ nguyên làm phương án dự phòng cho chuột.
+   Chỉ thêm animation — không đổi màu nền / viền / chữ của component nào.
+   ========================================================================= */
+.btn,.chip,.chat-btn,.chat-fab,.chat-thread,.nav a,.mobile-nav a,.x,.chat-back,tr.row{
+  -webkit-tap-highlight-color:transparent;
+  touch-action:manipulation;          /* bỏ delay 300ms, nhấn ăn ngay */
+}
+.btn,.chip,.chat-btn,.nav a,.mobile-nav a{
+  position:relative;
+  /* thả tay: bật về scale(1) hơi nảy kiểu spring */
+  transition:background .2s,border-color .2s,color .2s,box-shadow .2s,
+             transform 260ms cubic-bezier(.34,1.56,.64,1);
+}
+/* nhấn xuống: co nhanh, dứt khoát */
+.btn.is-press,.chip.is-press,.chat-btn.is-press,
+.nav a.is-press,.mobile-nav a.is-press{
+  transform:scale(.96);
+  transition:transform 120ms cubic-bezier(.34,1.56,.64,1);
+}
+.chat-fab.is-press{transform:scale(.93)}
+.x.is-press,.chat-back.is-press{transform:scale(.88);transition:transform 120ms cubic-bezier(.34,1.56,.64,1)}
+
+/* Lớp sáng mờ dần (highlight nút iOS): 0 -> .15 -> 0.
+   Bản cũ dùng nền rgba(255,255,255,.16) rồi lại hạ opacity xuống .15,
+   thành ~2.4% trắng -> mắt thường không thấy. Nay nền đặc, opacity mới là .15. */
+.btn::before,.chip::before{
+  content:"";position:absolute;inset:0;border-radius:inherit;background:#fff;
+  opacity:0;pointer-events:none;transition:opacity 260ms ease-out;
+}
+.btn.is-press::before,.chip.is-press::before{opacity:.15;transition:opacity 70ms ease-in}
+/* .nav a / .mobile-nav a đã dùng ::before cho vạch active -> dùng ::after */
+.nav a,.mobile-nav a,.chat-btn{overflow:hidden}
+.nav a::after,.mobile-nav a::after,.chat-btn::after{
+  content:"";position:absolute;inset:0;border-radius:inherit;background:#fff;
+  opacity:0;pointer-events:none;transition:opacity 260ms ease-out;
+}
+.nav a.is-press::after,.mobile-nav a.is-press::after,.chat-btn.is-press::after{
+  opacity:.12;transition:opacity 70ms ease-in;
+}
+/* Hàng bảng & dòng hội thoại: không scale (vỡ layout bảng), chỉ sáng lên rồi tắt dần */
+tr.row td{transition:background .26s ease-out}
+tr.row.is-press td{background:rgba(201,161,95,.075);transition:background .07s ease-in}
+.chat-thread{transition:background .26s ease-out}
+.chat-thread.is-press{background:var(--panel-2);transition:background .07s ease-in}
+
+/* =========================================================================
+   MỤC 5 — Khóa layout trên điện thoại (không còn cảnh "vào là phải zoom")
+   Nguyên nhân: <table> min-width 720px nằm trong grid item `main` không có
+   min-width:0 -> track 1fr bị đẩy rộng hơn màn hình -> trình duyệt thu nhỏ
+   cả trang. Chặn ở 3 tầng: body, grid track, và khung cuộn của bảng.
+   ========================================================================= */
+html,body{max-width:100%;overflow-x:hidden}
+body{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+.app.on{grid-template-columns:232px minmax(0,1fr)}
+main{min-width:0;max-width:min(1120px,100%)}
+.panel,.hero,.stat,.person,.verdict,.preview,.grid,.toolbar,.page-head{min-width:0}
+.tbl-wrap{
+  overflow-x:auto;max-width:100%;
+  -webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;
+}
+.toolbar .input{min-width:min(200px,100%)}
+.login{max-width:min(360px,100%)}
+.modal{max-width:min(520px,100%)}
+.chat-drawer{width:min(380px,92vw)}
+
+@media (max-width:900px){
+  .app.on{grid-template-columns:minmax(0,1fr)}
+  main{padding:18px 14px calc(96px + env(safe-area-inset-bottom))}
+  /* iOS tự phóng to trang khi focus input có font < 16px */
+  .input,select.input,textarea.input{font-size:16px}
+  table{min-width:620px}
+  th,td{padding-left:12px;padding-right:12px}
+  .hero{padding:20px 18px 18px}
+  .page-head{align-items:flex-start}
+  .chat-thread .t-prev{max-width:none}
+  .cards{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+}
+@media (max-width:380px){
+  main{padding:16px 12px calc(96px + env(safe-area-inset-bottom))}
+  .cards{grid-template-columns:1fr 1fr}
+  .toolbar .input{min-width:100%}
+}
+
+
+/* =========================================================================
+   MỤC 6 — biểu đồ SVG. Màu lấy nguyên từ hệ hiện có (vàng / xanh tín dụng /
+   nâu đỏ nợ) rồi tách sắc độ, không đưa thêm hue lạ vào bảng màu.
+   ========================================================================= */
+:root{
+  --chart-1:#C9A15F;  --chart-2:#E6CB92;  --chart-3:#3FAF7D;
+  --chart-4:#6FC9A0;  --chart-5:#B8623F;  --chart-6:#D18A67;  --chart-7:#7C776D;
+}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  border-bottom:1px solid var(--line-soft)}
+.panel-head h3{border-bottom:none;flex:1}
+.panel-head .btn{margin-right:14px}
+
+.chart{display:block;width:100%;max-width:100%;height:auto}
+.chart .c-grid{stroke:var(--line-soft);stroke-width:1}
+.chart .c-zero{stroke:var(--line-glow);stroke-width:1;stroke-dasharray:3 4}
+.chart .c-bar{fill:var(--gold);opacity:.78}
+.chart .c-val{fill:var(--muted);font-family:var(--mono);font-size:11px;text-anchor:middle}
+.chart .c-lab{fill:var(--dim);font-family:var(--mono);font-size:11px;text-anchor:middle}
+.chart .c-center{fill:var(--text);font-family:var(--mono);font-size:22px;font-weight:600;text-anchor:middle}
+.chart .c-line{fill:none;stroke:var(--gold-2);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+.chart .c-area{fill:rgba(201,161,95,.10);stroke:none}
+.chart .c-dot{fill:var(--panel);stroke:var(--gold-2);stroke-width:2}
+.chart.donut{max-width:240px;margin:0 auto}
+.chart .c-s1{stroke:var(--chart-1)} .chart .c-s2{stroke:var(--chart-2)}
+.chart .c-s3{stroke:var(--chart-3)} .chart .c-s4{stroke:var(--chart-4)}
+.chart .c-s5{stroke:var(--chart-5)} .chart .c-s6{stroke:var(--chart-6)}
+.chart .c-s7{stroke:var(--chart-7)}
+
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:14px;
+  padding-top:12px;border-top:1px solid var(--line-soft)}
+.legend span{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted)}
+.legend b{color:var(--text);font-weight:600}
+.legend .lg{width:9px;height:9px;border-radius:3px;flex:none}
+.lg-1{background:var(--chart-1)} .lg-2{background:var(--chart-2)}
+.lg-3{background:var(--chart-3)} .lg-4{background:var(--chart-4)}
+.lg-5{background:var(--chart-5)} .lg-6{background:var(--chart-6)}
+.lg-7{background:var(--chart-7)}
+
+.chart-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+@media (max-width:900px){
+  .chart-grid{grid-template-columns:minmax(0,1fr)}
+  .mobile-nav a{font-size:11px;padding:6px 1px}   /* nav mobile giờ có 6 mục */
+  .panel-head .btn{margin-right:12px}
+}
+
 /* ---------- giảm chuyển động: tắt toàn bộ trang trí ---------- */
 @media (prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
@@ -377,4 +522,7 @@ td .meta{color:var(--dim);font-size:12.5px;font-family:var(--mono)}
   .hero .amount{filter:none;opacity:1;transform:none}
   .stat:hover{transform:none}
   .btn.primary::after{display:none}
+  .is-press{transform:none!important}
+  .btn.is-press::before,.chip.is-press::before,
+  .nav a.is-press::after,.mobile-nav a.is-press::after,.chat-btn.is-press::after{opacity:0!important}
 }

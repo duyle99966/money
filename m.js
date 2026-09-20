@@ -57,7 +57,8 @@ const STATUS_VI = {OPEN:'Chưa trả',PARTIALLY_SETTLED:'Trả một phần',SET
 /* ---------------- storage ---------------- */
 const LS = 'sochung.v1';
 const Store = {
-  db:null, local:{txns:{},settlements:{},activity:{},config:{},users:{},friendships:{},messages:{}},
+  db:null, local:{txns:{},settlements:{},activity:{},config:{},users:{},friendships:{},messages:{},
+    groups:{},group_txns:{},savings:{},savings_entries:{},budgets:{}},
   async init(){
     try { this.db = await claude.use('db'); } catch(e){ this.db = null; }
     if (!this.db && window.FIREBASE_STORE) this.db = window.FIREBASE_STORE;
@@ -88,7 +89,8 @@ const Store = {
 };
 
 /* ---------------- state ---------------- */
-const Data = { txns:[], settlements:[], activity:[], users:[], usersById:{}, friendships:[], messages:[], config:{}, ready:false };
+const Data = { txns:[], settlements:[], activity:[], users:[], usersById:{}, friendships:[], messages:[], config:{}, ready:false,
+  groups:[], group_txns:[], savings:[], savings_entries:[], budgets:[] };
 let me = null;
 let mustChangePw = false;
 let peer = null;              // username của bạn đang mở sổ chung cùng (1 cặp = 1 sổ)
@@ -100,12 +102,14 @@ let uiFilter = { status:'ALL', q:'', sort:'new' };
 function applyUsers(rows){
   Data.users = rows;
   Data.usersById = Object.fromEntries(rows.map(r => [r.id, r]));
+  // v3 mục 5: role/quota của chính mình có thể vừa bị admin đổi — cập nhật ngay.
+  if (me && Data.usersById[me.username]) me = { ...me, ...Data.usersById[me.username] };
 }
 
 function reload(){ Data.reload(); }
 Data.reload = () => {
   if (!Store.db){
-    ['txns','settlements','activity'].forEach(c => {
+    ['txns','settlements','activity','groups','group_txns','savings','savings_entries','budgets'].forEach(c => {
       Data[c] = Object.entries(Store.local[c]||{}).map(([id,v])=>({id,...v}));
     });
     applyUsers(Object.entries(Store.local.users||{}).map(([id,v])=>({id,...v})));
@@ -126,7 +130,21 @@ const myTxns = () => { const p = currentPairId(); return p ? Data.txns.filter(t 
 const mySettlements = () => { const p = currentPairId(); return p ? Data.settlements.filter(s => pairIdOf(s) === p) : []; };
 function acceptedFriends(){
   if (!me) return [];
-  return Data.friendships.filter(f => f.status==='ACCEPTED' && (f.user_a===me.username||f.user_b===me.username))
+  return Data.friendships.filter(f => f.status==='ACCEPTED' && !f.ended_at &&
+    (f.user_a===me.username||f.user_b===me.username))
+    .map(f => f.user_a===me.username ? f.user_b : f.user_a);
+}
+// v3 mục 2: bạn bè đã huỷ — vẫn giữ bản ghi friendships (không xoá) để lịch sử
+// tin nhắn/giao dịch cũ xem lại được, chỉ đánh dấu ended_at.
+function isActiveFriend(u){
+  if (!me || !u) return false;
+  const f = Data.friendships.find(x=>x.id===makePairId(me.username,u));
+  return !!f && f.status==='ACCEPTED' && !f.ended_at;
+}
+function endedFriends(){
+  if (!me) return [];
+  return Data.friendships.filter(f => f.status==='ACCEPTED' && f.ended_at &&
+    (f.user_a===me.username||f.user_b===me.username))
     .map(f => f.user_a===me.username ? f.user_b : f.user_a);
 }
 function pendingIncoming(){
@@ -273,10 +291,56 @@ function myStats(){
 
 /* ---------------- permissions (mirror của RLS ở backend) ---------------- */
 const isAdmin = () => me && me.role === 'ADMIN';
+
+/* ---- v3 mục 5: cấp bậc tài khoản ADMIN / SSS_VIP / VIP / USER ----
+   Chỉ MỞ RỘNG enum users.role — 'ADMIN' và 'USER' giữ nguyên hành vi cũ.
+   Giá trị role lạ/thiếu được coi như 'USER' (an toàn nhất, ít quyền nhất). */
+const ROLES = ['ADMIN','SSS_VIP','VIP','USER'];
+const ROLE_VI = { ADMIN:'Quản trị viên', SSS_VIP:'SSS VIP', VIP:'VIP', USER:'Thường' };
+const ROLE_DESC = {
+  ADMIN:   'Toàn quyền, kể cả nâng/hạ cấp và tạo tài khoản mọi cấp.',
+  SSS_VIP: 'Toàn quyền dùng, tạo được tài khoản VIP/Thường, nâng/hạ cấp VIP/Thường.',
+  VIP:     'Toàn quyền dùng mọi tính năng, tạo nhóm không giới hạn.',
+  USER:    'Sổ chung, kết bạn, nhắn tin; tối đa 2 nhóm; chưa dùng được Thống kê, Sổ tiết kiệm, Ngân sách.',
+};
+const ROLE_GROUP_LIMIT = { USER: 2 };          // cấp không có trong bảng = không giới hạn
+const PREMIUM_PAGES = ['stats','savings','budget'];   // trang khoá với cấp USER
+const roleValid = r => ROLES.includes(r) ? r : 'USER';
+const myRole = () => me ? roleValid(me.role) : 'USER';
+const hasPremium = () => myRole() !== 'USER';
+const lockedPage = p => PREMIUM_PAGES.includes(p) && !hasPremium();
+const canManageUsers = () => myRole()==='ADMIN' || myRole()==='SSS_VIP';
+// Các cấp mà người đang đăng nhập được phép gán (khi tạo / đổi cấp).
+const assignableRoles = () => myRole()==='ADMIN' ? [...ROLES] : (myRole()==='SSS_VIP' ? ['VIP','USER'] : []);
+// SSS_VIP chỉ đụng được tới tài khoản đang là VIP/USER; ADMIN đụng được mọi tài khoản.
+function canChangeRoleOf(target){
+  const r = myRole(), tr = roleValid(target.role);
+  if (r==='ADMIN') return true;
+  if (r==='SSS_VIP') return tr==='VIP' || tr==='USER';
+  return false;
+}
+const groupLimit = () => ROLE_GROUP_LIMIT[myRole()];    // undefined = không giới hạn
+// Số nhóm đã tạo = max(bộ đếm group_quota_used, số nhóm thực tế created_by mình):
+// bộ đếm thiếu (bản ghi cũ) coi như 0 nhưng nhóm tạo từ trước mục 5 vẫn được tính.
+const groupQuotaUsed = () => Math.max((me && me.group_quota_used) || 0,
+  me ? Data.groups.filter(g => g.created_by === me.username).length : 0);
+const groupQuotaExhausted = () => { const l = groupLimit(); return l !== undefined && groupQuotaUsed() >= l; };
 const canEdit = t => isAdmin() || t.created_by === me.username;
 const canDelete = t => isAdmin() || t.created_by === me.username;
 // Người còn nợ (hoặc admin) mới được xác nhận trả.
 const canMarkPaid = t => remainOf(t) > 0 && (isAdmin() || otherOf(t.paid_by, pairIdOf(t)) === me.username);
+
+/* ---- v3 mục 1: xác nhận 2 chiều ----
+   settlement cũ (không có field status) coi như đã CONFIRMED, vì code cũ đã
+   cộng thẳng vào txns.repaid ngay khi tạo — không "confirm lại" dữ liệu cũ. */
+const settlementStatus = s => s.status || 'CONFIRMED';
+const canConfirmSettlement = s => settlementStatus(s)==='PENDING' && (isAdmin() || s.to_user===me.username);
+const canCancelSettlement = s => settlementStatus(s)==='PENDING' && (isAdmin() || s.from_user===me.username);
+function pendingOutgoingFor(t){ return Data.settlements.find(s=>s.transaction_id===t.id && settlementStatus(s)==='PENDING'); }
+function myPendingIncomingSettlements(){
+  if (!me) return [];
+  return Data.settlements.filter(s => settlementStatus(s)==='PENDING' && s.to_user===me.username);
+}
 
 /* ---------------- activity ---------------- */
 const now = () => new Date().toISOString();
@@ -413,15 +477,27 @@ const NAV = [
   {p:'dashboard',   t:'Tổng quan',   m:'Tổng quan'},
   {p:'friends',     t:'Kết bạn',     m:'Kết bạn'},
   {p:'transactions',t:'Giao dịch',   m:'Giao dịch'},
+  {p:'groups',      t:'Nhóm',        m:'Nhóm'},
   {p:'stats',       t:'Thống kê',    m:'Thống kê'},
   {p:'new',         t:'Tạo giao dịch',m:null},
   {p:'settlements', t:'Cân nợ',      m:'Cân nợ'},
   {p:'history',     t:'Lịch sử trả', m:null},
+  {p:'savings',     t:'Sổ tiết kiệm',m:null},
+  {p:'budget',      t:'Ngân sách',   m:null},
   {p:'activity',    t:'Nhật ký',     m:null},
   {p:'settings',    t:'Cài đặt',     m:'Cài đặt'},
   {p:'admin',       t:'Quản trị',    m:null, admin:true},
 ];
 
+const navCls = n => (route.path===n.p?'active':'') + (lockedPage(n.p)?' locked':'');
+function vLocked(path){
+  const n = NAV.find(x=>x.p===path);
+  return `
+  <div class="page-head"><div><h2>${esc(n?n.t:'Tính năng')}</h2></div></div>
+  <div class="panel"><div class="empty"><b>Tính năng dành cho tài khoản VIP</b>
+    Tài khoản gói Thường chưa dùng được trang này. Liên hệ quản trị viên để nâng cấp lên VIP.
+    <div style="margin-top:12px"><a class="btn primary" href="#/dashboard">Về Tổng quan</a></div></div></div>`;
+}
 function render(){
   if (!me) return;
   const b = peer ? balanceText() : null;
@@ -429,17 +505,23 @@ function render(){
     : (b.amount ? b.text + ' ' + vnd(b.amount) : 'Đã cân bằng');
   el('meAv').textContent = nameOf(me.username)[0];
   el('meName').textContent = nameOf(me.username);
-  el('meRole').textContent = me.role === 'ADMIN' ? 'Quản trị viên' : 'Thành viên';
+  el('meRole').textContent = myRole() === 'USER' ? 'Thành viên' : ROLE_VI[myRole()];
 
   const unpaid = myTxns().filter(t => t.paid_by !== me.username && remainOf(t) > 0).length;
   const friendReq = pendingIncoming().length;
-  el('nav').innerHTML = NAV.filter(n=>!n.admin||isAdmin()).map(n =>
-    `<a href="#/${n.p}" class="${route.path===n.p?'active':''}">${esc(n.t)}${
+  const confirmReq = myPendingIncomingSettlements().length;   // v3 mục 1
+  const groupReq = myGroupPendingConfirms();                  // v3 mục 3
+  el('nav').innerHTML = NAV.filter(n=>!n.admin||canManageUsers()).map(n =>
+    `<a href="#/${n.p}" class="${navCls(n)}">${esc(n.t)}${
       n.p==='transactions'&&unpaid?`<span class="badge">${unpaid}</span>`:''}${
-      n.p==='friends'&&friendReq?`<span class="badge">${friendReq}</span>`:''}</a>`).join('');
-  el('mnav').innerHTML = NAV.filter(n=>n.m && (!n.admin||isAdmin())).map(n =>
-    `<a href="#/${n.p}" class="${route.path===n.p?'active':''}">${esc(n.m)}${
-      n.p==='friends'&&friendReq?`<span class="badge">${friendReq}</span>`:''}</a>`).join('');
+      n.p==='friends'&&friendReq?`<span class="badge">${friendReq}</span>`:''}${
+      n.p==='settlements'&&confirmReq?`<span class="badge">${confirmReq}</span>`:''}${
+      n.p==='groups'&&groupReq?`<span class="badge">${groupReq}</span>`:''}</a>`).join('');
+  el('mnav').innerHTML = NAV.filter(n=>n.m && (!n.admin||canManageUsers())).map(n =>
+    `<a href="#/${n.p}" class="${navCls(n)}">${esc(n.m)}${
+      n.p==='friends'&&friendReq?`<span class="badge">${friendReq}</span>`:''}${
+      n.p==='settlements'&&confirmReq?`<span class="badge">${confirmReq}</span>`:''}${
+      n.p==='groups'&&groupReq?`<span class="badge">${groupReq}</span>`:''}</a>`).join('');
 
   const chatUnread = totalUnread();
   [el('chatBadge'), el('chatBadgeFab')].forEach(b => {
@@ -454,8 +536,11 @@ function render(){
     return;
   }
 
+  if (lockedPage(route.path)){ el('main').innerHTML = vLocked(route.path); return; }   // v3 mục 5
+
   const fn = ({dashboard:vDashboard,stats:vStats,friends:vFriends,transactions:vTransactions,detail:vDetail,new:vNew,
                settlements:vSettlements,history:vHistory,activity:vActivity,
+               groups:vGroups,savings:vSavings,budget:vBudget,
                settings:vSettings,admin:vAdmin})[route.path] || vDashboard;
   el('main').innerHTML = fn();
   if (route.path === 'new') bindForm();
@@ -494,8 +579,9 @@ function vDashboard(){
     <div><h2>Xin chào, ${esc(nameOf(me.username))}</h2>
     <p>Sổ chung với ${esc(nameOf(peer))}. Mọi giao dịch được chia đôi tự động.</p></div>
     <div class="actions">
+      ${isActiveFriend(peer) ? `
       <button class="btn" onclick="openQuickAdd()">Ghi nhanh</button>
-      <a class="btn primary" href="#/new">+ Giao dịch mới</a>
+      <a class="btn primary" href="#/new">+ Giao dịch mới</a>` : `<span class="tag">Đã huỷ kết bạn · chỉ xem lại</span>`}
     </div>
   </div>
   ${peerBar()}
@@ -727,6 +813,7 @@ function txnTable(list){
   <tbody>${list.map(t=>{
     const s = split(t.amount, t.paid_by, pairIdOf(t)), st = statusOf(t), rem = remainOf(t);
     const dir = t.paid_by === me.username ? 'credit' : 'debit';
+    const pend = pendingOutgoingFor(t);
     return `<tr class="row" onclick="go('transactions/${t.id}')">
       <td class="meta num">${fmtDate(t.date)}</td>
       <td><div class="title">${esc(t.title)}</div>
@@ -735,9 +822,11 @@ function txnTable(list){
       <td>${esc(nameOf(t.paid_by))}</td>
       <td class="num">${vnd(s[me.username])}</td>
       <td class="num" style="color:var(--${rem?dir:'dim'})">${rem?vnd(rem):'—'}</td>
-      <td><span class="status"><i class="dot ${st==='SETTLED'?'done':st==='OPEN'?'open':'part'}"></i>${STATUS_VI[st]}</span></td>
-      <td onclick="event.stopPropagation()">${canMarkPaid(t)
-        ? `<button class="btn sm" onclick="markPaid('${t.id}')">Xác nhận trả</button>`:''}</td>
+      <td><span class="status"><i class="dot ${st==='SETTLED'?'done':st==='OPEN'?'open':'part'}"></i>${STATUS_VI[st]}</span>
+        ${pend?`<span class="tag" style="margin-left:6px">Chờ xác nhận</span>`:''}</td>
+      <td onclick="event.stopPropagation()">${pend
+        ? (canConfirmSettlement(pend) ? `<button class="btn sm primary" onclick="confirmSettlement('${pend.id}')">Xác nhận nhận</button>` : '')
+        : (canMarkPaid(t) ? `<button class="btn sm" onclick="markPaid('${t.id}')">Xác nhận trả</button>`:'')}</td>
     </tr>`;}).join('')}</tbody></table>`;
 }
 
@@ -758,8 +847,9 @@ function vTransactions(){
   <div class="page-head">
     <div><h2>Giao dịch</h2><p>Sổ với ${esc(nameOf(peer))} · ${myTxns().length} khoản đã ghi</p></div>
     <div class="actions">
+      ${isActiveFriend(peer) ? `
       <button class="btn" onclick="openQuickAdd()">Ghi nhanh</button>
-      <a class="btn primary" href="#/new">+ Giao dịch mới</a>
+      <a class="btn primary" href="#/new">+ Giao dịch mới</a>` : `<span class="tag">Đã huỷ kết bạn · chỉ xem lại</span>`}
     </div>
   </div>
   ${peerBar()}
@@ -802,7 +892,7 @@ function vDetail(){
       <p><span class="tag">${esc(CAT_VI[t.category]||t.category)}</span> · ${fmtDate(t.date)} · ${esc(nameOf(t.created_by))} tạo
       ${t.edited_at?` · sửa lần cuối ${fmtDT(t.edited_at)} bởi ${esc(nameOf(t.edited_by))}`:''}</p></div>
     <div class="actions">
-      ${canMarkPaid(t)?`<button class="btn primary" onclick="markPaid('${t.id}')">Xác nhận đã trả</button>`:''}
+      ${(!pendingOutgoingFor(t) && canMarkPaid(t))?`<button class="btn primary" onclick="markPaid('${t.id}')">Xác nhận đã trả</button>`:''}
       ${canEdit(t)?`<button class="btn" onclick="go('new','${t.id}')">Sửa</button>`:''}
       ${canDelete(t)?`<button class="btn danger" onclick="confirmDelete('${t.id}')">Xóa</button>`:''}
     </div>
@@ -821,9 +911,20 @@ function vDetail(){
     <div class="l" style="margin-top:8px">
       Nợ gốc ${vnd(owedOf(t))} · đã hoàn ${vnd(t.repaid||0)} ·
       trạng thái <b>${st}</b> (${STATUS_VI[st]})</div>
-    ${rem && canMarkPaid(t) ? `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn primary sm" onclick="markPaid('${t.id}')">Trả hết ${vnd(rem)}</button>
-      <button class="btn sm" onclick="openPartial('${t.id}')">Trả một phần</button></div>`:''}
+    ${(()=>{
+      const pend = pendingOutgoingFor(t);
+      if (pend) return `<div class="preview" style="margin-top:12px">
+        <div class="row"><span>Yêu cầu trả ${vnd(pend.amount)} đang chờ ${esc(nameOf(pend.to_user))} xác nhận</span>
+        <span style="display:flex;gap:6px">
+          ${canConfirmSettlement(pend) ? `<button class="btn sm primary" onclick="confirmSettlement('${pend.id}')">Xác nhận nhận</button>
+            <button class="btn sm" onclick="rejectSettlement('${pend.id}',false)">Từ chối</button>` : ''}
+          ${canCancelSettlement(pend) && !canConfirmSettlement(pend) ? `<button class="btn sm" onclick="rejectSettlement('${pend.id}',true)">Huỷ yêu cầu</button>` : ''}
+        </span></div></div>`;
+      if (rem && canMarkPaid(t)) return `<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn primary sm" onclick="markPaid('${t.id}')">Trả hết ${vnd(rem)}</button>
+        <button class="btn sm" onclick="openPartial('${t.id}')">Trả một phần</button></div>`;
+      return '';
+    })()}
   </div>
 
   ${t.note ? `<section class="section panel"><h3>Ghi chú</h3><div class="body">${esc(t.note)}</div></section>`:''}`;
@@ -838,6 +939,8 @@ function vNew(){
   if (t && !isAdmin() && pairIdOf(t) !== currentPairId())
     return `<div class="panel"><div class="empty"><b>Giao dịch này không thuộc sổ đang mở</b></div></div>`;
   if (!t && !peer) return noPeerView('Giao dịch mới');
+  if (!t && !isActiveFriend(peer)) return `<div class="panel"><div class="empty"><b>Đã huỷ kết bạn với ${esc(nameOf(peer))}</b>
+    Không thể tạo giao dịch mới với người đã huỷ kết bạn. Vẫn xem lại được lịch sử ở trang Giao dịch.</div></div>`;
   const pid = t ? pairIdOf(t) : currentPairId();
   const [pa, pb] = pid.split('_');
   return `
@@ -933,6 +1036,7 @@ async function submitTxn(id){
 /* ---- quick add ---- */
 function openQuickAdd(){
   if (!peer) return toast('Kết bạn để bắt đầu ghi chi tiêu chung');
+  if (!isActiveFriend(peer)) return toast(`Đã huỷ kết bạn với ${nameOf(peer)}, không thể ghi giao dịch mới`);
   modal(`<header><h3>Ghi nhanh</h3><button class="x" onclick="closeModal()">✕</button></header>
   <div class="body">
     <div class="field"><label for="q_title">Chi gì?</label>
@@ -970,23 +1074,48 @@ async function quickSubmit(){
   closeModal(); toast(`Đã thêm · ${vnd(split(amount,paid_by,currentPairId())[other(paid_by)])} còn nợ`);
 }
 
-/* ---- pay / settle ---- */
+/* ---- pay / settle: chỉ TẠO YÊU CẦU chờ xác nhận, chưa cộng vào repaid ---- */
 async function payTxn(t, amount, note){
   const rem = remainOf(t);
   const pay = Math.min(Math.trunc(amount), rem);
   if (pay <= 0) return 0;
-  const body = {...t}; delete body.id;
-  await Store.set('txns', t.id, { ...body, repaid:(t.repaid||0)+pay, updated_at:now() });
+  if (pendingOutgoingFor(t)){ toast('Khoản này đang có yêu cầu chờ xác nhận, đợi hoặc huỷ yêu cầu cũ trước đã'); return 0; }
   await Store.set('settlements', rid(), { from_user:otherOf(t.paid_by, pairIdOf(t)), to_user:t.paid_by,
-    pair_id:pairIdOf(t), amount:pay, transaction_id:t.id, note:note||'', created_at:now(), created_by:me.username });
+    pair_id:pairIdOf(t), amount:pay, transaction_id:t.id, note:note||'', created_at:now(), created_by:me.username,
+    status:'PENDING' });
   return pay;
 }
 async function markPaid(id){
   const t = Data.txns.find(x=>x.id===id);
   if (!t || !canMarkPaid(t)) return toast('Bạn không có quyền xác nhận khoản này');
   const paid = await payTxn(t, remainOf(t), 'Trả đủ');
+  if (!paid) return;
   await log('MARK_PAID','transaction',id,{title:t.title, amount:paid});
-  toast(`Đã ghi nhận ${vnd(paid)}`);
+  toast(`Đã gửi yêu cầu · chờ ${nameOf(t.paid_by)} xác nhận ${vnd(paid)}`);
+}
+// Người nhận tiền (hoặc admin) bấm xác nhận — lúc này mới cộng vào txns.repaid.
+async function confirmSettlement(id){
+  const s = Data.settlements.find(x=>x.id===id);
+  if (!s || !canConfirmSettlement(s)) return toast('Bạn không có quyền xác nhận khoản này');
+  const t = Data.txns.find(x=>x.id===s.transaction_id);
+  if (t){
+    const tb = {...t}; delete tb.id;
+    await Store.set('txns', t.id, { ...tb, repaid:(t.repaid||0)+s.amount, updated_at:now() });
+  }
+  const sb = {...s}; delete sb.id;
+  await Store.set('settlements', id, { ...sb, status:'CONFIRMED', confirmed_by:me.username, confirmed_at:now() });
+  await log('SETTLEMENT','settlement',id,{title:t?t.title:'', amount:s.amount});
+  toast(`Đã xác nhận nhận ${vnd(s.amount)}`);
+}
+// byRequester=true: người trả tự huỷ yêu cầu của mình. false: người nhận từ chối.
+async function rejectSettlement(id, byRequester){
+  const s = Data.settlements.find(x=>x.id===id);
+  if (!s) return;
+  if (byRequester ? !canCancelSettlement(s) : !canConfirmSettlement(s)) return toast('Bạn không có quyền thao tác khoản này');
+  const sb = {...s}; delete sb.id;
+  await Store.set('settlements', id, { ...sb, status:'REJECTED', confirmed_by:me.username, confirmed_at:now() });
+  await log('EDIT','settlement',id,{title: byRequester?'Huỷ yêu cầu thanh toán':'Từ chối xác nhận', amount:s.amount});
+  toast(byRequester ? 'Đã huỷ yêu cầu thanh toán' : 'Đã từ chối xác nhận');
 }
 function openPartial(id){
   const t = Data.txns.find(x=>x.id===id); if (!t) return;
@@ -1003,18 +1132,34 @@ async function doPartial(id){
   const amt = parseAmount(el('pp').value);
   if (!amt) return toast('Số tiền không hợp lệ');
   const paid = await payTxn(t, amt, 'Trả một phần');
+  if (!paid){ closeModal(); return; }
   await log('MARK_PAID','transaction',id,{title:t.title, amount:paid});
-  closeModal(); toast(`Đã ghi nhận ${vnd(paid)}`);
+  closeModal(); toast(`Đã gửi yêu cầu · chờ ${nameOf(t.paid_by)} xác nhận ${vnd(paid)}`);
 }
 
 function vSettlements(){
   if (!peer) return noPeerView('Cân nợ');
   const b = balanceText();
   const open = sortedMyTxns().filter(t => remainOf(t) > 0);
+  const pid = currentPairId();
+  const incoming = Data.settlements.filter(s => pairIdOf(s)===pid && settlementStatus(s)==='PENDING' && s.to_user===me.username);
+  const outgoing = Data.settlements.filter(s => pairIdOf(s)===pid && settlementStatus(s)==='PENDING' && s.from_user===me.username);
   return `
   <div class="page-head"><div><h2>Cân nợ</h2>
     <p>Trả một lần cho toàn bộ số dư giữa bạn và ${esc(nameOf(peer))}.</p></div></div>
   ${peerBar()}
+  ${incoming.length ? `<section class="section panel"><h3>Chờ bạn xác nhận (${incoming.length})</h3><div class="body">
+    ${incoming.map(s=>{ const t = Data.txns.find(x=>x.id===s.transaction_id);
+      return `<div class="kv"><span>${esc(nameOf(s.from_user))} báo đã trả ${vnd(s.amount)}${t?` · “${esc(t.title)}”`:''}</span>
+      <span style="display:flex;gap:6px">
+        <button class="btn sm primary" onclick="confirmSettlement('${s.id}')">Xác nhận nhận</button>
+        <button class="btn sm" onclick="rejectSettlement('${s.id}',false)">Từ chối</button></span></div>`; }).join('')}
+  </div></section>` : ''}
+  ${outgoing.length ? `<section class="section panel"><h3>Đang chờ xác nhận (${outgoing.length})</h3><div class="body">
+    ${outgoing.map(s=>{ const t = Data.txns.find(x=>x.id===s.transaction_id);
+      return `<div class="kv"><span>Chờ ${esc(nameOf(s.to_user))} xác nhận ${vnd(s.amount)}${t?` · “${esc(t.title)}”`:''}</span>
+      <button class="btn sm" onclick="rejectSettlement('${s.id}',true)">Huỷ yêu cầu</button></div>`; }).join('')}
+  </div></section>` : ''}
   <section class="hero">
     <p class="who-line">${esc(nameOf(me.username))} ↔ ${esc(nameOf(peer))}</p>
     <p class="amount ${b.amount?(b.debtor===me.username?'debit':'credit'):''}">${vnd(b.amount)}</p>
@@ -1059,32 +1204,35 @@ async function doSettle(){
     left -= await payTxn(t, left, 'Cân nợ');
   }
   await log('SETTLEMENT','settlement',rid(),{from:b.debtor, to:b.creditor, amount:amt-left});
-  closeModal(); toast(`Đã cân nợ ${vnd(amt-left)}`);
+  closeModal(); toast((amt-left) ? `Đã gửi yêu cầu cân nợ ${vnd(amt-left)} · chờ ${nameOf(b.creditor)} xác nhận` : 'Không có khoản nào được gửi yêu cầu');
 }
 
 /* ---- history ---- */
+const SETTLE_STATUS_VI = {CONFIRMED:'Đã xác nhận', PENDING:'Chờ xác nhận', REJECTED:'Đã từ chối/huỷ'};
 function vHistory(){
   if (!peer) return noPeerView('Lịch sử trả');
   const list = [...mySettlements()].sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||''));
   const months = [...new Set(list.map(s=>(s.created_at||'').slice(0,7)))];
   const m = uiFilter.month && months.includes(uiFilter.month) ? uiFilter.month : 'ALL';
   const shown = m === 'ALL' ? list : list.filter(s => (s.created_at||'').startsWith(m));
-  const total = shown.reduce((a,s)=>a+s.amount,0);
+  const total = shown.filter(s=>settlementStatus(s)==='CONFIRMED').reduce((a,s)=>a+s.amount,0);
   return `
   <div class="page-head"><div><h2>Lịch sử trả</h2>
-    <p>${shown.length} lần thanh toán · tổng ${vnd(total)}. Lịch sử không bị xóa.</p></div></div>
+    <p>${shown.length} lần thanh toán · tổng đã xác nhận ${vnd(total)}. Lịch sử không bị xóa.</p></div></div>
   ${peerBar()}
   <div class="toolbar"><div class="chips">
     <button class="chip ${m==='ALL'?'on':''}" onclick="uiFilter.month='ALL';render()">Tất cả</button>
     ${months.map(x=>`<button class="chip ${m===x?'on':''}" onclick="uiFilter.month='${x}';render()">${x}</button>`).join('')}
   </div></div>
   <div class="panel">${shown.length ? `<div class="tbl-wrap"><table>
-    <thead><tr><th>Thời gian</th><th>Từ</th><th>Đến</th><th>Số tiền</th><th>Cho giao dịch</th></tr></thead>
+    <thead><tr><th>Thời gian</th><th>Từ</th><th>Đến</th><th>Số tiền</th><th>Cho giao dịch</th><th>Trạng thái</th></tr></thead>
     <tbody>${shown.map(s=>{
       const t = Data.txns.find(x=>x.id===s.transaction_id);
+      const st = settlementStatus(s);
       return `<tr><td class="meta num">${fmtDT(s.created_at)}</td><td>${esc(nameOf(s.from_user))}</td>
       <td>${esc(nameOf(s.to_user))}</td><td class="num">${vnd(s.amount)}</td>
-      <td class="meta">${t?esc(t.title):'—'}${s.note?` · ${esc(s.note)}`:''}</td></tr>`;}).join('')}
+      <td class="meta">${t?esc(t.title):'—'}${s.note?` · ${esc(s.note)}`:''}</td>
+      <td><span class="status"><i class="dot ${st==='CONFIRMED'?'done':st==='PENDING'?'open':'part'}"></i>${SETTLE_STATUS_VI[st]}</span></td></tr>`;}).join('')}
     </tbody></table></div>`
     : `<div class="empty"><b>Chưa có lần thanh toán nào</b>Khi ai đó trả nợ, nó sẽ được ghi lại ở đây.</div>`}</div>`;
 }
@@ -1113,7 +1261,8 @@ function vSettings(){
     <div class="panel"><h3>Tài khoản</h3><div class="body">
       <div class="kv"><span>Tên đăng nhập</span><b>${esc(me.username)}</b></div>
       <div class="kv"><span>Tên hiển thị</span><b>${esc(nameOf(me.username))}</b></div>
-      <div class="kv"><span>Vai trò</span><b>${esc(me.role)}</b></div>
+      <div class="kv"><span>Vai trò</span><b>${esc(ROLE_VI[myRole()])}</b></div>
+      ${groupLimit()!==undefined?`<div class="kv"><span>Lượt tạo nhóm</span><b class="num">${Math.min(groupQuotaUsed(),groupLimit())}/${groupLimit()}</b></div>`:''}
       <p class="hint">Tên đăng nhập và vai trò do hệ thống quản lý, không tự đổi được.</p>
     </div></div>
     <div class="panel"><h3>Bảo mật</h3><div class="body">
@@ -1125,6 +1274,14 @@ function vSettings(){
       Khi triển khai thật, dùng Supabase Auth thay cho khối này.</p>
     </div></div>
   </div>
+  <section class="section panel"><h3>Công cụ khác</h3><div class="body">
+    <p class="hint" style="margin-top:0">Không thuộc sổ chung 2 người, xem/quản lý riêng ở đây.</p>
+    <div class="actions">
+      <a class="btn" href="#/groups">Nhóm</a>
+      <a class="btn" href="#/savings">Sổ tiết kiệm</a>
+      <a class="btn" href="#/budget">Ngân sách</a>
+    </div>
+  </div></section>
   <section class="section panel"><h3>Phiên</h3><div class="body">
     <button class="btn danger" onclick="logout()">Đăng xuất</button></div></section>`;
 }
@@ -1197,10 +1354,19 @@ function vFriends(){
   <section class="section panel"><h3>Bạn bè (${friends.length})</h3><div class="body">
     ${friends.length ? friends.map(u=>`
       <div class="kv"><span>${esc(nameOf(u))} (${esc(u)})${u===peer?' · đang mở':''}</span>
-      ${u===peer ? `<span class="tag">Sổ đang mở</span>`
-        : `<button class="btn sm" onclick="switchPeer('${u}')">Mở sổ chung</button>`}</div>`).join('')
+      <span style="display:flex;gap:6px">
+        ${u===peer ? `<span class="tag">Sổ đang mở</span>`
+          : `<button class="btn sm" onclick="switchPeer('${u}')">Mở sổ chung</button>`}
+        <button class="btn sm" onclick="confirmUnfriend('${u}')">Huỷ kết bạn</button>
+      </span></div>`).join('')
       : `<div class="empty"><b>Chưa có bạn bè</b>Gửi lời mời kết bạn ở trên để bắt đầu tạo sổ chung.</div>`}
-  </div></section>`;
+  </div></section>
+
+  ${endedFriends().length ? `<section class="section panel"><h3>Đã huỷ kết bạn (${endedFriends().length})</h3>
+  <div class="body"><p class="hint" style="margin-top:0">Chỉ xem lại được lịch sử — không tạo giao dịch/nhắn tin mới.</p>
+    ${endedFriends().map(u=>`<div class="kv"><span>${esc(nameOf(u))} (${esc(u)})${u===peer?' · đang mở':''}</span>
+    ${u===peer ? `<span class="tag">Đang xem</span>` : `<button class="btn sm" onclick="switchPeer('${u}')">Xem lại lịch sử</button>`}</div>`).join('')}
+  </div></section>` : ''}`;
 }
 async function sendFriendRequest(){
   const uname = el('fr_q').value.trim().toLowerCase();
@@ -1210,7 +1376,8 @@ async function sendFriendRequest(){
   if (!target) return el('fr_err').innerHTML = `<div class="err">Không tìm thấy tài khoản "${esc(uname)}".</div>`;
   const id = makePairId(me.username, uname);
   const existing = Data.friendships.find(f=>f.id===id) || await getFriendshipDoc(id);
-  if (existing){
+  // v3 mục 2: nếu bản ghi cũ đã ended_at, coi như chưa từng — cho kết bạn lại
+  if (existing && !existing.ended_at){
     el('fr_err').innerHTML = existing.status === 'ACCEPTED'
       ? `<div class="err">Hai người đã là bạn bè.</div>`
       : `<div class="err">Đã có lời mời đang chờ giữa hai người.</div>`;
@@ -1221,6 +1388,62 @@ async function sendFriendRequest(){
   await log('CREATE','friendship',id,{title:nameOf(uname)});
   el('fr_q').value = ''; el('fr_err').innerHTML = ''; toast('Đã gửi lời mời kết bạn');
 }
+/* =========================================================================
+   V3 MỤC 2 — Huỷ kết bạn có điều kiện.
+   Không xoá bản ghi friendships (giữ nguyên messages.thread_id + lịch sử) —
+   chỉ set ended_at/ended_by. Chỉ cho huỷ khi sổ chung của cặp đó đã sạch nợ:
+   không còn giao dịch OPEN/PARTIALLY_SETTLED, không còn settlement PENDING.
+   ========================================================================= */
+// v3 mục 3: 2 người có chung nhóm chi tiêu và còn nợ nhau trực tiếp trong 1
+// khoản (1 người là paid_by, người kia là participant chưa confirmed) thì
+// cũng coi là "chưa sạch nợ" — không cho huỷ kết bạn.
+function hasOpenGroupTies(u1,u2){
+  for (const gt of Data.group_txns){
+    const g = groupById(gt.group_id); if (!g) continue;
+    if (!isGroupMember(g,u1) || !isGroupMember(g,u2)) continue;
+    const payer = gt.paid_by;
+    const debtor = payer===u1 ? u2 : (payer===u2 ? u1 : null);
+    if (!debtor) continue;   // khoản này không phải paid_by=1 trong 2 người -> không nợ trực tiếp
+    if (groupOwedTo(gt, debtor) > 0) return true;
+  }
+  return false;
+}
+function canUnfriend(pairId){
+  const [u1,u2] = pairId.split('_');
+  const openTxns = Data.txns.filter(t => pairIdOf(t)===pairId && remainOf(t) > 0).length;
+  const pendingSettle = Data.settlements.filter(s => pairIdOf(s)===pairId && settlementStatus(s)==='PENDING').length;
+  const groupTies = hasOpenGroupTies(u1,u2);
+  return { ok: openTxns===0 && pendingSettle===0 && !groupTies, openTxns, pendingSettle, groupTies };
+}
+function confirmUnfriend(u){
+  const check = canUnfriend(makePairId(me.username,u));
+  if (!check.ok){
+    const parts = [];
+    if (check.openTxns) parts.push(`${check.openTxns} giao dịch chưa xong`);
+    if (check.pendingSettle) parts.push(`${check.pendingSettle} khoản chờ xác nhận`);
+    if (check.groupTies) parts.push(`khoản chia nhóm chưa xong`);
+    return toast(`Chưa thể huỷ kết bạn: còn ${parts.join(', ')}. Cân nợ xong đã nhé.`);
+  }
+  modal(`<header><h3>Huỷ kết bạn với ${esc(nameOf(u))}?</h3><button class="x" onclick="closeModal()">✕</button></header>
+  <div class="body"><p style="margin:0;color:var(--muted)">Sổ chung và lịch sử trò chuyện được giữ lại để xem sau,
+  nhưng hai người sẽ không thể tạo giao dịch hay nhắn tin mới với nhau nữa.</p></div>
+  <footer><button class="btn" onclick="closeModal()">Đóng</button>
+  <button class="btn danger" onclick="closeModal();unfriend('${u}')">Huỷ kết bạn</button></footer>`);
+}
+async function unfriend(u){
+  const id = makePairId(me.username, u);
+  const check = canUnfriend(id);
+  if (!check.ok) return toast('Chưa thể huỷ kết bạn: sổ chung chưa sạch nợ.');
+  const f = Data.friendships.find(x=>x.id===id);
+  if (!f) return;
+  const body = {...f}; delete body.id;
+  await Store.set('friendships', id, { ...body, ended_at:now(), ended_by:me.username });
+  await log('DELETE','friendship',id,{title:`Huỷ kết bạn với ${nameOf(u)}`});
+  if (peer === u){ peer = null; savePeer(''); }
+  toast(`Đã huỷ kết bạn với ${esc(nameOf(u))}`);
+  go('friends');
+}
+
 async function respondFriend(id, accept){
   const f = Data.friendships.find(x=>x.id===id); if (!f) return;
   if (f.user_a!==me.username && f.user_b!==me.username) return toast('Không có quyền');
@@ -1234,6 +1457,442 @@ async function respondFriend(id, accept){
     await log('DELETE','friendship',id,{});
     toast('Đã từ chối lời mời');
   }
+}
+
+/* =========================================================================
+   V3 MỤC 3 — Nhóm chi tiêu (hội nhóm).
+   Tách hoàn toàn khỏi txns/split()/pairIdOf()/otherOf() (các hàm đó giả định
+   cứng 2 người, đụng vào rất rủi ro) — dùng 2 collection mới hoàn toàn:
+   `groups` (thành viên) và `group_txns` (từng khoản chi + xác nhận 2 chiều
+   cho từng thành viên, cùng triết lý với mục 1 nhưng lưu ngay trên bản ghi
+   group_txns thay vì tạo settlement riêng, vì mỗi khoản có N người nợ).
+   ========================================================================= */
+function myGroups(){
+  if (!me) return [];
+  return Data.groups.filter(g => g.members && g.members[me.username] && g.members[me.username].status==='ACTIVE');
+}
+const groupById = id => Data.groups.find(g=>g.id===id);
+const isGroupMember = (g,u) => !!(g && g.members && g.members[u] && g.members[u].status==='ACTIVE');
+function activeGroupMembers(g){ return Object.keys(g.members||{}).filter(u => g.members[u].status==='ACTIVE'); }
+function groupTxnsOf(gid){
+  return [...Data.group_txns].filter(x=>x.group_id===gid)
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||'') || (b.created_at||'').localeCompare(a.created_at||''));
+}
+// Chia đều số tiền cho các thành viên participants===true; người ứng tiền
+// nhận phần lẻ trước (cùng kiểu làm tròn với split() hiện có, cho nhất quán).
+function computeGroupShares(amount, paidBy, participants){
+  const trueUsers = Object.keys(participants).filter(u=>participants[u]).sort();
+  const n = trueUsers.length || 1;
+  const base = Math.floor(amount / n);
+  let rem = amount - base*n;
+  const shares = {};
+  const order = trueUsers.includes(paidBy) ? [paidBy, ...trueUsers.filter(u=>u!==paidBy)] : trueUsers;
+  for (const u of order){ shares[u] = base + (rem>0?1:0); if (rem>0) rem--; }
+  for (const u of Object.keys(participants)) if (!participants[u]) shares[u] = 0;
+  return shares;
+}
+// u nợ paid_by bao nhiêu cho khoản gt này (0 nếu không tham gia hoặc đã confirmed).
+function groupOwedTo(gt, u){
+  if (u === gt.paid_by) return 0;
+  if (!gt.participants || !gt.participants[u]) return 0;
+  const p = (gt.paid_status||{})[u];
+  if (p && p.confirmed) return 0;
+  return gt.shares ? (gt.shares[u]||0) : 0;
+}
+// Số dư của tôi trong 1 nhóm: dương = người khác đang nợ tôi, âm = tôi đang nợ người khác.
+function myGroupBalance(gid){
+  let net = 0;
+  for (const gt of groupTxnsOf(gid)){
+    if (gt.paid_by === me.username){
+      for (const u of Object.keys(gt.participants||{})) net += groupOwedTo(gt, u);
+    } else {
+      net -= groupOwedTo(gt, me.username);
+    }
+  }
+  return net;
+}
+// Chỉ cho đổi participants (tham gia/không tham gia) khi CHƯA ai báo trả hay
+// được xác nhận cho khoản này — đúng yêu cầu "trước khi giao dịch được xác
+// nhận lần đầu" trong spec.
+function canToggleGroupParticipant(gt){
+  return !Object.values(gt.paid_status||{}).some(p=>p.paid || p.confirmed);
+}
+// Số khoản mà TÔI là người ứng tiền và có người đã báo đã trả, đang chờ tôi xác nhận.
+function myGroupPendingConfirms(){
+  if (!me) return 0;
+  let n = 0;
+  for (const gt of Data.group_txns){
+    if (gt.paid_by !== me.username) continue;
+    for (const u in (gt.paid_status||{})){
+      const p = gt.paid_status[u];
+      if (p.paid && !p.confirmed) n++;
+    }
+  }
+  return n;
+}
+
+function groupQuotaHint(){
+  const l = groupLimit();
+  return l === undefined ? '' : ` Đã dùng ${Math.min(groupQuotaUsed(), l)}/${l} lượt tạo nhóm.`;
+}
+function openGroupQuotaModal(){
+  const l = groupLimit();
+  modal(`<header><h3>Hết lượt tạo nhóm</h3><button class="x" onclick="closeModal()">✕</button></header>
+  <div class="body"><div class="empty"><b>Bạn đã dùng hết ${Math.min(groupQuotaUsed(), l)}/${l} lượt tạo nhóm ở gói Thường</b>
+    Liên hệ quản trị viên để nâng cấp lên VIP và tạo nhóm không giới hạn.</div></div>
+  <footer><button class="btn primary" onclick="closeModal()">Đã hiểu</button></footer>`);
+}
+function openCreateGroup(){
+  if (groupQuotaExhausted()) return openGroupQuotaModal();
+  const friends = acceptedFriends();
+  if (!friends.length) return toast('Cần có ít nhất 1 bạn bè để tạo nhóm — kết bạn ở trang Kết bạn trước đã');
+  modal(`<header><h3>Tạo nhóm mới</h3><button class="x" onclick="closeModal()">✕</button></header>
+  <div class="body">
+    <div class="field"><label for="g_name">Tên nhóm</label>
+      <input class="input" id="g_name" placeholder="Du lịch Đà Lạt"></div>
+    <div class="field"><label>Thêm thành viên (chỉ chọn được từ danh sách bạn bè)</label>
+      <div class="check-list">${friends.map(u=>`
+        <label class="check-item"><input type="checkbox" class="g-mem" value="${u}"> ${esc(nameOf(u))}</label>`).join('')}</div>
+    </div>
+    <div id="g_err"></div>
+  </div>
+  <footer><button class="btn" onclick="closeModal()">Hủy</button>
+  <button class="btn primary" onclick="doCreateGroup()">Tạo nhóm</button></footer>`);
+  el('g_name').focus();
+}
+async function doCreateGroup(){
+  if (groupQuotaExhausted()){ closeModal(); return openGroupQuotaModal(); }   // chặn lần nữa phía code
+  const name = el('g_name').value.trim();
+  if (!name){ el('g_err').innerHTML = `<div class="err">Cần nhập tên nhóm.</div>`; return; }
+  const friends = acceptedFriends();
+  const checked = [...document.querySelectorAll('.g-mem:checked')].map(c=>c.value).filter(u=>friends.includes(u));
+  const members = { [me.username]: { role:'OWNER', joined_at:now(), status:'ACTIVE' } };
+  for (const u of checked) members[u] = { role:'MEMBER', joined_at:now(), status:'ACTIVE' };
+  const gid = rid();
+  await Store.set('groups', gid, { name, created_by:me.username, created_at:now(), members });
+  // v3 mục 5: tăng bộ đếm — đọc lại bản ghi mới nhất để không ghi đè role vừa bị admin đổi.
+  try {
+    const fresh = await getUserDoc(me.username);
+    if (fresh){ const b = {...fresh}; delete b.id;
+      await Store.set('users', me.username, { ...b, group_quota_used:(fresh.group_quota_used||0)+1 }); }
+  } catch(e){}
+  await log('CREATE','group',gid,{title:name});
+  closeModal(); toast('Đã tạo nhóm'); go('groups', gid);
+}
+
+function openGroupTxn(gid){
+  const g = groupById(gid); if (!g || !isGroupMember(g, me.username)) return;
+  const mem = activeGroupMembers(g);
+  modal(`<header><h3>Ghi chi tiêu nhóm</h3><button class="x" onclick="closeModal()">✕</button></header>
+  <div class="body">
+    <div class="field"><label for="gt_title">Nội dung</label>
+      <input class="input" id="gt_title" placeholder="Ăn tối cả nhóm"></div>
+    <div class="two">
+      <div class="field"><label for="gt_amount">Số tiền (VND)</label>
+        <input class="input num" id="gt_amount" inputmode="numeric" placeholder="500000"></div>
+      <div class="field"><label for="gt_cat">Danh mục</label>
+        <select class="input" id="gt_cat">${CATEGORIES.map(c=>`<option value="${c}">${CAT_VI[c]}</option>`).join('')}</select></div>
+    </div>
+    <div class="two">
+      <div class="field"><label for="gt_paid">Ai đã ứng tiền</label>
+        <select class="input" id="gt_paid">${mem.map(u=>
+          `<option value="${u}" ${u===me.username?'selected':''}>${esc(nameOf(u))}</option>`).join('')}</select></div>
+      <div class="field"><label for="gt_date">Ngày</label>
+        <input class="input" id="gt_date" type="date" value="${todayISO()}"></div>
+    </div>
+    <p class="hint" style="margin-top:0">Mặc định chia đều cho mọi thành viên đang hoạt động. Mỗi người có thể bấm
+    "Không tham gia" cho riêng khoản này, miễn là chưa ai báo đã trả.</p>
+    <div id="gt_err"></div>
+  </div>
+  <footer><button class="btn" onclick="closeModal()">Hủy</button>
+  <button class="btn primary" onclick="submitGroupTxn('${gid}')">Thêm khoản chi</button></footer>`);
+  el('gt_title').focus();
+}
+async function submitGroupTxn(gid){
+  const g = groupById(gid); if (!g) return;
+  const title = el('gt_title').value.trim();
+  const amount = parseAmount(el('gt_amount').value);
+  const category = el('gt_cat').value, paid_by = el('gt_paid').value, date = el('gt_date').value || todayISO();
+  const errs = [];
+  if (!title) errs.push('Cần nhập nội dung.');
+  if (!amount || amount<=0) errs.push('Số tiền phải lớn hơn 0.');
+  if (errs.length){ el('gt_err').innerHTML = `<div class="err">${errs.join(' ')}</div>`; return; }
+  const activeMembers = activeGroupMembers(g);
+  const participants = Object.fromEntries(activeMembers.map(u=>[u,true]));
+  const shares = computeGroupShares(amount, paid_by, participants);
+  const paid_status = {};
+  for (const u of activeMembers) if (u !== paid_by) paid_status[u] = { paid:false, confirmed:false };
+  const tid = rid();
+  await Store.set('group_txns', tid, { group_id:gid, title, amount, category, paid_by, date,
+    created_by:me.username, created_at:now(), participants, shares, paid_status });
+  await log('CREATE','group_txn',tid,{title, amount});
+  closeModal(); toast('Đã ghi chi tiêu nhóm');
+}
+async function toggleGroupParticipant(gtId, user){
+  const gt = Data.group_txns.find(x=>x.id===gtId); if (!gt) return;
+  if (!canToggleGroupParticipant(gt)) return toast('Đã có người báo/xác nhận trả, không đổi được nữa');
+  if (user === gt.paid_by) return toast('Người ứng tiền luôn tham gia khoản này');
+  if (!(isAdmin() || me.username===user)) return toast('Không có quyền');
+  const nowIn = !gt.participants[user];
+  const participants = { ...gt.participants, [user]: nowIn };
+  const shares = computeGroupShares(gt.amount, gt.paid_by, participants);
+  const paid_status = { ...gt.paid_status };
+  if (!nowIn) delete paid_status[user];
+  else paid_status[user] = paid_status[user] || { paid:false, confirmed:false };
+  const b = {...gt}; delete b.id;
+  await Store.set('group_txns', gtId, { ...b, participants, shares, paid_status });
+  await log('EDIT','group_txn',gtId,{title:gt.title});
+  toast(nowIn ? 'Đã tham gia lại khoản này' : 'Đã đánh dấu không tham gia khoản này');
+}
+function canMarkGroupPaid(gt,u){ return (gt.paid_status||{})[u] && !gt.paid_status[u].confirmed && (isAdmin() || me.username===u); }
+async function markGroupPaid(gtId, u){
+  const gt = Data.group_txns.find(x=>x.id===gtId);
+  if (!gt || !canMarkGroupPaid(gt,u)) return toast('Không có quyền');
+  const paid_status = { ...gt.paid_status, [u]: { ...gt.paid_status[u], paid:true } };
+  const b = {...gt}; delete b.id;
+  await Store.set('group_txns', gtId, { ...b, paid_status });
+  await log('MARK_PAID','group_txn',gtId,{title:gt.title, amount:(gt.shares||{})[u]||0});
+  toast(`Đã báo đã trả · chờ ${nameOf(gt.paid_by)} xác nhận`);
+}
+function canConfirmGroupPaid(gt,u){
+  const p = (gt.paid_status||{})[u];
+  return p && p.paid && !p.confirmed && (isAdmin() || me.username===gt.paid_by);
+}
+async function confirmGroupPaid(gtId, u){
+  const gt = Data.group_txns.find(x=>x.id===gtId);
+  if (!gt || !canConfirmGroupPaid(gt,u)) return toast('Không có quyền');
+  const paid_status = { ...gt.paid_status, [u]: { ...gt.paid_status[u], confirmed:true, confirmed_by:me.username, confirmed_at:now() } };
+  const b = {...gt}; delete b.id;
+  await Store.set('group_txns', gtId, { ...b, paid_status });
+  await log('SETTLEMENT','group_txn',gtId,{title:gt.title, amount:(gt.shares||{})[u]||0});
+  toast(`Đã xác nhận nhận từ ${nameOf(u)}`);
+}
+async function rejectGroupPaid(gtId, u){
+  const gt = Data.group_txns.find(x=>x.id===gtId); if (!gt) return;
+  if (!(isAdmin() || me.username===gt.paid_by)) return toast('Không có quyền');
+  const paid_status = { ...gt.paid_status, [u]: { paid:false, confirmed:false } };
+  const b = {...gt}; delete b.id;
+  await Store.set('group_txns', gtId, { ...b, paid_status });
+  await log('EDIT','group_txn',gtId,{title:'Từ chối xác nhận trả nhóm'});
+  toast('Đã từ chối, người trả sẽ thấy để báo lại');
+}
+
+function vGroups(){
+  if (route.param) return vGroupDetail(route.param);
+  const groups = myGroups();
+  return `
+  <div class="page-head"><div><h2>Nhóm</h2><p>Chi tiêu chung nhiều người, tách riêng khỏi sổ chung 2 người.${groupQuotaHint()}</p></div>
+    <div class="actions"><button class="btn primary" onclick="openCreateGroup()">+ Tạo nhóm</button></div></div>
+  ${groups.length ? `<div class="grid cards">${groups.map(g=>{
+    const bal = myGroupBalance(g.id);
+    const cls = bal===0?'':(bal>0?'credit':'debit');
+    return `<div class="panel" style="cursor:pointer" onclick="go('groups','${g.id}')"><div class="body">
+      <div class="kv"><span style="color:var(--text);font-weight:600">${esc(g.name)}</span>
+      <span class="tag">${activeGroupMembers(g).length} thành viên</span></div>
+      <div class="kv"><span>Số dư của bạn</span><b class="num ${cls}">${bal===0?'Đã cân bằng':vnd(Math.abs(bal))}</b></div>
+    </div></div>`;}).join('')}</div>`
+    : `<div class="panel"><div class="empty"><b>Chưa có nhóm nào</b>Tạo nhóm để chia chi tiêu với nhiều bạn bè cùng lúc.</div></div>`}`;
+}
+function vGroupDetail(gid){
+  const g = groupById(gid);
+  if (!g || !isGroupMember(g, me.username))
+    return `<div class="panel"><div class="empty"><b>Không tìm thấy nhóm</b>
+    <div style="margin-top:12px"><a class="btn sm" href="#/groups">Quay lại danh sách nhóm</a></div></div></div>`;
+  const txns = groupTxnsOf(gid);
+  const bal = myGroupBalance(gid);
+  const members = activeGroupMembers(g);
+  return `
+  <div class="page-head">
+    <div><p style="margin:0 0 4px"><a href="#/groups" style="color:var(--muted);text-decoration:none">← Nhóm</a></p>
+      <h2>${esc(g.name)}</h2><p>${members.length} thành viên · tạo bởi ${esc(nameOf(g.created_by))}</p></div>
+    <div class="actions"><button class="btn primary" onclick="openGroupTxn('${gid}')">+ Ghi chi tiêu nhóm</button></div>
+  </div>
+  <section class="hero">
+    <p class="who-line">Số dư của bạn trong nhóm</p>
+    <p class="amount ${bal===0?'':(bal>0?'credit':'debit')}">${vnd(Math.abs(bal))}</p>
+    <p class="sub">${bal===0?'Bạn không nợ ai và không ai nợ bạn trong nhóm này.'
+      :(bal>0?'Các thành viên khác đang nợ bạn tổng cộng.':'Bạn đang nợ các thành viên khác tổng cộng.')}</p>
+  </section>
+  <section class="section panel"><h3>Thành viên</h3><div class="body">
+    ${members.map(u=>`<div class="kv"><span>${esc(nameOf(u))}${g.members[u].role==='OWNER'?' · chủ nhóm':''}${u===me.username?' · bạn':''}</span></div>`).join('')}
+  </div></section>
+  <section class="section panel"><h3>Chi tiêu nhóm (${txns.length})</h3><div class="body">
+  ${txns.length ? txns.map(gt=>groupTxnCard(gt)).join('') : `<div class="empty"><b>Chưa có khoản chi nào</b>Ghi khoản đầu tiên cho nhóm này.</div>`}
+  </div></section>`;
+}
+function groupTxnCard(gt){
+  const g = groupById(gt.group_id);
+  const others = (g ? activeGroupMembers(g) : Object.keys(gt.participants||{})).filter(u=>u!==gt.paid_by);
+  return `<div class="preview" style="margin-bottom:10px">
+    <div class="row"><span><b style="color:var(--text)">${esc(gt.title)}</b> · ${esc(nameOf(gt.paid_by))} ứng ${vnd(gt.amount)}</span>
+    <span class="meta">${fmtDate(gt.date)} · ${esc(CAT_VI[gt.category]||gt.category)}</span></div>
+    ${others.map(u=>{
+      const isIn = !!(gt.participants && gt.participants[u]);
+      const p = (gt.paid_status||{})[u] || {};
+      const share = gt.shares ? (gt.shares[u]||0) : 0;
+      const st = !isIn ? 'Không tham gia' : p.confirmed ? 'Đã xong' : p.paid ? 'Chờ xác nhận' : 'Chưa trả';
+      const canTogg = canToggleGroupParticipant(gt) && (isAdmin()||me.username===u);
+      return `<div class="row"><span>${esc(nameOf(u))}${isIn?` · phần ${vnd(share)}`:''}</span>
+      <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="tag">${st}</span>
+        ${canTogg ? `<button class="btn sm" onclick="toggleGroupParticipant('${gt.id}','${u}')">${isIn?'Không tham gia':'Tham gia lại'}</button>`:''}
+        ${isIn && !p.confirmed && !p.paid && canMarkGroupPaid(gt,u) ? `<button class="btn sm primary" onclick="markGroupPaid('${gt.id}','${u}')">Đã trả</button>`:''}
+        ${isIn && p.paid && !p.confirmed && canConfirmGroupPaid(gt,u) ? `<button class="btn sm primary" onclick="confirmGroupPaid('${gt.id}','${u}')">Xác nhận nhận</button>
+          <button class="btn sm" onclick="rejectGroupPaid('${gt.id}','${u}')">Từ chối</button>`:''}
+      </span></div>`;}).join('')}
+  </div>`;
+}
+
+/* =========================================================================
+   V3 MỤC 4a — Sổ tiết kiệm cá nhân (khóa theo username, không có pair_id).
+   Số dư luôn tính runtime từ savings_entries — giống triết lý netBalance()
+   hiện có, không lưu số dư cache để tránh lệch dữ liệu.
+   ========================================================================= */
+function mySavings(){ return me ? Data.savings.filter(s=>s.username===me.username) : []; }
+function savingsEntriesOf(sid){
+  return [...Data.savings_entries].filter(e=>e.savings_id===sid)
+    .sort((a,b)=>(b.date||'').localeCompare(a.date||'') || (b.created_at||'').localeCompare(a.created_at||''));
+}
+function savingsBalance(sid){
+  return Data.savings_entries.filter(e=>e.savings_id===sid)
+    .reduce((sum,e)=> sum + (e.type==='DEPOSIT' ? e.amount : -e.amount), 0);
+}
+function openNewSaving(){
+  modal(`<header><h3>Mục tiêu tiết kiệm mới</h3><button class="x" onclick="closeModal()">✕</button></header>
+  <div class="body">
+    <div class="field"><label for="sv_name">Tên mục tiêu</label>
+      <input class="input" id="sv_name" placeholder="Mua xe máy"></div>
+    <div class="field"><label for="sv_target">Số tiền mục tiêu (VND)</label>
+      <input class="input num" id="sv_target" inputmode="numeric" placeholder="20000000"></div>
+    <div class="field"><label for="sv_note">Ghi chú (tùy chọn)</label>
+      <input class="input" id="sv_note" placeholder=""></div>
+    <div id="sv_err"></div>
+  </div>
+  <footer><button class="btn" onclick="closeModal()">Hủy</button>
+  <button class="btn primary" onclick="doCreateSaving()">Tạo mục tiêu</button></footer>`);
+  el('sv_name').focus();
+}
+async function doCreateSaving(){
+  const name = el('sv_name').value.trim();
+  const target_amount = parseAmount(el('sv_target').value);
+  if (!name){ el('sv_err').innerHTML = `<div class="err">Cần nhập tên mục tiêu.</div>`; return; }
+  const sid = rid();
+  await Store.set('savings', sid, { username:me.username, name, target_amount,
+    note:el('sv_note').value.trim(), created_at:now(), closed:false });
+  await log('CREATE','saving',sid,{title:name});
+  closeModal(); toast('Đã tạo mục tiêu tiết kiệm');
+}
+function openSavingEntry(sid, type){
+  const s = Data.savings.find(x=>x.id===sid); if (!s) return;
+  const label = type==='DEPOSIT' ? 'Nạp tiền' : 'Rút tiền';
+  modal(`<header><h3>${label} · ${esc(s.name)}</h3><button class="x" onclick="closeModal()">✕</button></header>
+  <div class="body">
+    <div class="field"><label for="se_amt">Số tiền</label>
+      <input class="input num" id="se_amt" inputmode="numeric" placeholder="500000"></div>
+    <div class="field"><label for="se_date">Ngày</label>
+      <input class="input" id="se_date" type="date" value="${todayISO()}"></div>
+    <div class="field"><label for="se_note">Ghi chú (tùy chọn)</label>
+      <input class="input" id="se_note" placeholder=""></div>
+    <div id="se_err"></div>
+  </div>
+  <footer><button class="btn" onclick="closeModal()">Hủy</button>
+  <button class="btn primary" onclick="doSavingEntry('${sid}','${type}')">${label}</button></footer>`);
+  el('se_amt').focus();
+}
+async function doSavingEntry(sid, type){
+  const s = Data.savings.find(x=>x.id===sid); if (!s || s.username!==me.username) return toast('Không có quyền');
+  const amount = parseAmount(el('se_amt').value);
+  if (!amount || amount<=0){ el('se_err').innerHTML = `<div class="err">Số tiền phải lớn hơn 0.</div>`; return; }
+  if (type==='WITHDRAW' && amount > savingsBalance(sid)){
+    el('se_err').innerHTML = `<div class="err">Không đủ số dư để rút.</div>`; return;
+  }
+  const eid = rid();
+  await Store.set('savings_entries', eid, { savings_id:sid, amount, type,
+    date:el('se_date').value || todayISO(), note:el('se_note').value.trim(), created_at:now() });
+  await log(type==='DEPOSIT'?'CREATE':'DELETE','saving_entry',eid,{title:s.name, amount});
+  closeModal(); toast(type==='DEPOSIT'?'Đã nạp tiền':'Đã rút tiền');
+}
+async function closeSaving(sid){
+  const s = Data.savings.find(x=>x.id===sid); if (!s || s.username!==me.username) return;
+  const b = {...s}; delete b.id;
+  await Store.set('savings', sid, { ...b, closed:!s.closed });
+  toast(s.closed ? 'Đã mở lại mục tiêu' : 'Đã đóng mục tiêu');
+}
+function vSavings(){
+  const list = mySavings();
+  return `
+  <div class="page-head"><div><h2>Sổ tiết kiệm</h2><p>Mục tiêu tiết kiệm của riêng bạn, không liên quan tới sổ chung.</p></div>
+    <div class="actions"><button class="btn primary" onclick="openNewSaving()">+ Mục tiêu mới</button></div></div>
+  ${list.length ? `<div class="grid cards">${list.map(s=>{
+    const bal = savingsBalance(s.id);
+    const pct = s.target_amount ? Math.min(100, Math.round(bal/s.target_amount*100)) : 0;
+    const entries = savingsEntriesOf(s.id);
+    return `<div class="panel"><div class="body">
+      <div class="kv"><span style="color:var(--text);font-weight:600">${esc(s.name)}${s.closed?' <span class="tag">Đã đóng</span>':''}</span></div>
+      <div class="kv"><span>Tiến độ</span><b class="num">${vnd(bal)}${s.target_amount?' / '+vnd(s.target_amount):''}</b></div>
+      ${s.target_amount ? `<div class="progress"><div class="progress-bar" style="width:${pct}%"></div></div>` : ''}
+      ${s.note?`<p class="hint" style="margin-top:10px">${esc(s.note)}</p>`:''}
+      <div class="actions" style="margin-top:12px">
+        <button class="btn sm" onclick="openSavingEntry('${s.id}','DEPOSIT')">Nạp</button>
+        <button class="btn sm" onclick="openSavingEntry('${s.id}','WITHDRAW')">Rút</button>
+        <button class="btn sm" onclick="closeSaving('${s.id}')">${s.closed?'Mở lại':'Đóng'}</button>
+      </div>
+      ${entries.length ? `<div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>Ngày</th><th>Loại</th><th>Số tiền</th></tr></thead>
+        <tbody>${entries.slice(0,6).map(e=>`<tr><td class="meta num">${fmtDate(e.date)}</td>
+        <td>${e.type==='DEPOSIT'?'Nạp':'Rút'}</td><td class="num">${vnd(e.amount)}</td></tr>`).join('')}</tbody></table></div>`:''}
+    </div></div>`;}).join('')}</div>`
+    : `<div class="panel"><div class="empty"><b>Chưa có mục tiêu nào</b>Tạo mục tiêu đầu tiên để bắt đầu tiết kiệm.</div></div>`}`;
+}
+
+/* =========================================================================
+   V3 MỤC 4b — Ngân sách chi tiêu cá nhân theo tháng/danh mục.
+   Read-only, tổng hợp phía trên txns/split() hiện có (mọi pair_id người dùng
+   tham gia, không chỉ sổ đang mở) + 1 collection mới `budgets` cho hạn mức.
+   ========================================================================= */
+function myTxnsAllPairs(){
+  if (!me) return [];
+  return Data.txns.filter(t => { const [a,b] = pairIdOf(t).split('_'); return a===me.username || b===me.username; });
+}
+function budgetSpent(month, category){
+  return myTxnsAllPairs()
+    .filter(t => (t.date||'').startsWith(month) && (CATEGORIES.includes(t.category)?t.category:'Other')===category)
+    .reduce((sum,t)=> sum + split(t.amount, t.paid_by, pairIdOf(t))[me.username], 0);
+}
+function budgetOf(month, category){
+  return Data.budgets.find(b=>b.username===me.username && b.month===month && b.category===category);
+}
+async function saveBudget(category, val){
+  const month = uiFilter.budgetMonth || todayISO().slice(0,7);
+  const amount = parseAmount(val);
+  const id = `${me.username}_${month}_${category}`;
+  await Store.set('budgets', id, { username:me.username, month, category, limit_amount:amount, created_at:now() });
+  toast('Đã lưu hạn mức');
+}
+function vBudget(){
+  const month = uiFilter.budgetMonth || todayISO().slice(0,7);
+  const rows = CATEGORIES.map(c=>{
+    const b = budgetOf(month,c);
+    const limit = b ? b.limit_amount : 0;
+    const spent = budgetSpent(month,c);
+    const pct = limit ? Math.min(100, Math.round(spent/limit*100)) : 0;
+    return { c, limit, spent, pct, over: limit>0 && spent>limit };
+  });
+  return `
+  <div class="page-head"><div><h2>Ngân sách</h2>
+    <p>Hạn mức chi tiêu theo danh mục, tính trên mọi sổ chung bạn tham gia.</p></div>
+    <div class="actions"><input class="input" type="month" style="width:auto" value="${month}"
+      onchange="uiFilter.budgetMonth=this.value;render()"></div></div>
+  <div class="grid cards">
+  ${rows.map(r=>`
+    <div class="panel"><div class="body">
+      <div class="kv"><span>${esc(CAT_VI[r.c])}</span>
+      <b class="num" style="color:var(--${r.over?'debit':'text'})">${vnd(r.spent)}${r.limit?' / '+vnd(r.limit):''}</b></div>
+      <div class="progress"><div class="progress-bar ${r.over?'over':''}" style="width:${r.pct}%"></div></div>
+      <div class="field" style="margin-top:12px;margin-bottom:0"><label>Hạn mức tháng này</label>
+        <input class="input num" inputmode="numeric" placeholder="Chưa đặt" value="${r.limit||''}"
+          onchange="saveBudget('${r.c}', this.value)"></div>
+    </div></div>`).join('')}
+  </div>`;
 }
 
 /* ---- admin ---- */
@@ -1291,7 +1950,9 @@ function exportBackup(){
     exported_at: now(), exported_by: me ? me.username : null,
     users: Data.users, friendships: Data.friendships,
     txns: Data.txns, settlements: Data.settlements,
-    messages: Data.messages, activity: Data.activity
+    messages: Data.messages, activity: Data.activity,
+    groups: Data.groups, group_txns: Data.group_txns,
+    savings: Data.savings, savings_entries: Data.savings_entries, budgets: Data.budgets
   };
   const blob = new Blob([JSON.stringify(dump, null, 2)], { type:'application/json' });
   const a = document.createElement('a');
@@ -1302,9 +1963,32 @@ function exportBackup(){
   toast('Đã tải file backup JSON');
 }
 
+function vAccountsSection(){
+  const rows = [...Data.users].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  return `<section class="section panel">
+    <div class="panel-head">
+      <h3>Tài khoản</h3>
+      <button class="btn sm" onclick="openCreateUser()">+ Tạo tài khoản</button>
+    </div>
+    <div class="body">${rows.length ? `<div class="tbl-wrap"><table>
+      <thead><tr><th>Username</th><th>Tên hiển thị</th><th>Cấp</th><th>Người tạo</th><th>Ngày tạo</th><th>Trạng thái</th><th></th></tr></thead>
+      <tbody>${rows.map(u=>`
+        <tr><td>${esc(u.id)}</td><td>${esc(u.name)}</td><td><span class="tag">${esc(ROLE_VI[roleValid(u.role)])}</span></td>
+        <td class="meta">${esc(u.created_by||'—')}</td>
+        <td class="meta num">${u.created_at?fmtDate(u.created_at.slice(0,10)):'—'}</td>
+        <td>${u.must_change_pw?'<span class="tag">Chờ đổi mật khẩu</span>':'<span class="tag">Hoạt động</span>'}</td>
+        <td>${canChangeRoleOf(u)?`<button class="btn sm" onclick="openChangeRole('${esc(u.id)}')">Nâng/Hạ cấp</button>`:''}</td></tr>`).join('')}
+      </tbody></table></div>`
+      : `<div class="empty">Chưa tải được danh sách tài khoản.</div>`}</div>
+  </section>`;
+}
 function vAdmin(){
-  if (!isAdmin()) return `<div class="panel"><div class="empty"><b>Trang chỉ dành cho quản trị viên</b>
+  if (!canManageUsers()) return `<div class="panel"><div class="empty"><b>Trang chỉ dành cho quản trị viên</b>
     Tài khoản của bạn không có quyền truy cập.</div></div>`;
+  // SSS_VIP chỉ thấy phần quản lý tài khoản — không thấy giao dịch/nhật ký toàn hệ thống.
+  if (!isAdmin()) return `
+  <div class="page-head"><div><h2>Quản trị</h2><p>Tạo tài khoản VIP/Thường và nâng/hạ cấp giữa hai cấp này.</p></div></div>
+  ${vAccountsSection()}`;
   const b = balanceText();
   const openN = Data.txns.filter(t=>statusOf(t)==='OPEN').length;
   const partN = Data.txns.filter(t=>statusOf(t)==='PARTIALLY_SETTLED').length;
@@ -1330,21 +2014,7 @@ function vAdmin(){
       || `<div class="empty">Chưa có hoạt động.</div>`}</div></section>
   <section class="section panel"><h3>Tất cả giao dịch</h3>
     ${Data.txns.length?`<div class="tbl-wrap">${txnTable(sortedTxns())}</div>`:`<div class="empty">Chưa có dữ liệu.</div>`}</section>
-  <section class="section panel">
-    <div class="panel-head">
-      <h3>Tài khoản</h3>
-      <button class="btn sm" onclick="openCreateUser()">+ Tạo tài khoản</button>
-    </div>
-    <div class="body">${Data.users.length ? `<div class="tbl-wrap"><table>
-      <thead><tr><th>Username</th><th>Tên hiển thị</th><th>Vai trò</th><th>Người tạo</th><th>Ngày tạo</th><th>Trạng thái</th></tr></thead>
-      <tbody>${[...Data.users].sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||'')).map(u=>`
-        <tr><td>${esc(u.id)}</td><td>${esc(u.name)}</td><td>${esc(u.role)}</td>
-        <td class="meta">${esc(u.created_by||'—')}</td>
-        <td class="meta num">${u.created_at?fmtDate(u.created_at.slice(0,10)):'—'}</td>
-        <td>${u.must_change_pw?'<span class="tag">Chờ đổi mật khẩu</span>':'<span class="tag">Hoạt động</span>'}</td></tr>`).join('')}
-      </tbody></table></div>`
-      : `<div class="empty">Chưa tải được danh sách tài khoản.</div>`}</div>
-  </section>
+  ${vAccountsSection()}
 
   <section class="section panel">
     <h3>Dữ liệu &amp; bảo trì</h3>
@@ -1366,12 +2036,18 @@ function vAdmin(){
   </section>`;
 }
 function openCreateUser(){
+  if (!canManageUsers()) return toast('Không có quyền');
+  const roleOpts = assignableRoles();
   modal(`<header><h3>Tạo tài khoản mới</h3><button class="x" onclick="closeModal()">✕</button></header>
   <div class="body">
     <div class="field"><label for="nu_user">Tên đăng nhập</label>
       <input class="input" id="nu_user" autocapitalize="none" spellcheck="false" placeholder="vd: minh"></div>
     <div class="field"><label for="nu_name">Tên hiển thị</label>
       <input class="input" id="nu_name" placeholder="vd: Minh"></div>
+    <div class="field"><label for="nu_role">Cấp tài khoản</label>
+      <select class="input" id="nu_role">${roleOpts.map(r=>
+        `<option value="${r}" ${r==='USER'?'selected':''}>${esc(ROLE_VI[r])}</option>`).join('')}</select></div>
+    ${!isAdmin()?`<p class="hint" style="margin-top:0">Bạn chỉ tạo được tài khoản cấp VIP hoặc Thường.</p>`:''}
     <div id="nu_err"></div>
     <p class="hint">Mật khẩu mặc định là "${esc(DEFAULT_PW)}". Tài khoản mới sẽ bị bắt đổi mật khẩu ở lần đăng nhập đầu tiên.</p>
   </div>
@@ -1380,23 +2056,59 @@ function openCreateUser(){
   el('nu_user').focus();
 }
 async function doCreateUser(){
-  if (!isAdmin()) return toast('Không có quyền');
+  if (!canManageUsers()) return toast('Không có quyền');
   const uname = el('nu_user').value.trim().toLowerCase();
   const name = el('nu_name').value.trim();
+  const role = el('nu_role').value;
   const errs = [];
+  if (!assignableRoles().includes(role)) errs.push('Bạn không có quyền tạo tài khoản ở cấp này.');
   if (!/^[a-z0-9_]{2,20}$/.test(uname)) errs.push('Tên đăng nhập chỉ gồm chữ thường, số, gạch dưới (2–20 ký tự).');
   if (!name) errs.push('Cần nhập tên hiển thị.');
   if (errs.length){ el('nu_err').innerHTML = `<div class="err">${errs.join(' ')}</div>`; return; }
   const existing = await getUserDoc(uname);
   if (existing){ el('nu_err').innerHTML = `<div class="err">Tên đăng nhập "${esc(uname)}" đã tồn tại.</div>`; return; }
-  await Store.set('users', uname, { username:uname, name, role:'USER',
-    created_by:me.username, created_at:now(), must_change_pw:true });
+  await Store.set('users', uname, { username:uname, name, role,
+    created_by:me.username, created_at:now(), must_change_pw:true, group_quota_used:0 });
   const creds = (await credsDoc()) || {};
   creds[uname] = await sha(DEFAULT_PW);
   await saveCreds(creds);
-  await log('CREATE','user',uname,{title:name});
+  await log('CREATE','user',uname,{title:`${name} (${ROLE_VI[role]})`});
   closeModal();
   toast(`Đã tạo tài khoản "${uname}" · mật khẩu mặc định: ${DEFAULT_PW}`);
+}
+
+/* ---- v3 mục 5: nâng/hạ cấp tài khoản ---- */
+function openChangeRole(uname){
+  const u = Data.usersById[uname]; if (!u) return;
+  if (!canChangeRoleOf(u)) return toast('Không có quyền đổi cấp tài khoản này');
+  const cur = roleValid(u.role), opts = assignableRoles();
+  modal(`<header><h3>Nâng/Hạ cấp · ${esc(nameOf(uname))}</h3><button class="x" onclick="closeModal()">✕</button></header>
+  <div class="body">
+    <div class="kv"><span>Cấp hiện tại</span><b>${esc(ROLE_VI[cur])}</b></div>
+    <div class="field"><label for="cr_role">Cấp mới</label>
+      <select class="input" id="cr_role">${opts.map(r=>
+        `<option value="${r}" ${r===cur?'selected':''}>${esc(ROLE_VI[r])}</option>`).join('')}</select></div>
+    <div id="cr_err"></div>
+    <p class="hint">${opts.map(r=>`<b>${esc(ROLE_VI[r])}</b>: ${esc(ROLE_DESC[r])}`).join('<br>')}</p>
+  </div>
+  <footer><button class="btn" onclick="closeModal()">Hủy</button>
+  <button class="btn primary" onclick="doChangeRole('${esc(uname)}')">Lưu cấp mới</button></footer>`);
+}
+async function doChangeRole(uname){
+  const newRole = el('cr_role').value;
+  const fresh = await getUserDoc(uname);          // đọc lại bản mới nhất, không tin UI cũ
+  if (!fresh) return toast('Không tìm thấy tài khoản');
+  if (!canChangeRoleOf(fresh) || !assignableRoles().includes(newRole)) return toast('Không có quyền đổi sang cấp này');
+  const oldRole = roleValid(fresh.role);
+  if (newRole === oldRole){ closeModal(); return toast('Cấp không thay đổi'); }
+  // Không cho hạ cấp ADMIN cuối cùng của hệ thống.
+  if (oldRole==='ADMIN' && newRole!=='ADMIN' && Data.users.filter(u=>u.role==='ADMIN').length <= 1){
+    el('cr_err').innerHTML = `<div class="err">Đây là quản trị viên cuối cùng — không thể hạ cấp.</div>`; return;
+  }
+  const body = {...fresh}; delete body.id;
+  await Store.set('users', uname, { ...body, role:newRole, upgraded_by:me.username, upgraded_at:now() });
+  await log('EDIT','user',uname,{title:`${uname}: ${ROLE_VI[oldRole]} → ${ROLE_VI[newRole]}`});
+  closeModal(); toast(`Đã đổi ${uname} sang cấp ${ROLE_VI[newRole]}`);
 }
 
 /* ---- delete ---- */
@@ -1452,7 +2164,7 @@ async function startApp(user){
   el('appView').classList.add('on');
   route = parseHash();
   render();
-  ['txns','settlements','activity'].forEach(col => {
+  ['txns','settlements','activity','groups','group_txns','savings','savings_entries','budgets'].forEach(col => {
     Store.watch(col, rows => { Data[col] = rows; render(); });
   });
   Store.watch('users', rows => { applyUsers(rows); render(); });

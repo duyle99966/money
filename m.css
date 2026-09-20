@@ -507,6 +507,20 @@ main{min-width:0;max-width:min(1120px,100%)}
 .lg-5{background:var(--chart-5)} .lg-6{background:var(--chart-6)}
 .lg-7{background:var(--chart-7)}
 
+/* =========================================================================
+   V3 MỤC 3/4 — Nhóm / Sổ tiết kiệm / Ngân sách.
+   Chỉ thêm class mới, ăn theo đúng biến màu + bo góc đã có (--line-soft,
+   --gold/--gold-2, --credit, --debit, --r) — không đổi selector nào ở trên.
+   ========================================================================= */
+.progress{height:8px;border-radius:999px;background:var(--line-soft);overflow:hidden;margin-top:8px}
+.progress-bar{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--gold-2),var(--gold));
+  transition:width .3s var(--ease)}
+.progress-bar.over{background:linear-gradient(90deg,var(--debit),#D18A67)}
+.check-list{display:flex;flex-direction:column;gap:9px;max-height:240px;overflow-y:auto;
+  border:1px solid var(--line-soft);border-radius:var(--r);padding:10px 12px}
+.check-item{display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer}
+.check-item input{width:15px;height:15px;accent-color:var(--gold)}
+
 .chart-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
 @media (max-width:900px){
   .chart-grid{grid-template-columns:minmax(0,1fr)}
@@ -526,3 +540,6 @@ main{min-width:0;max-width:min(1120px,100%)}
   .btn.is-press::before,.chip.is-press::before,
   .nav a.is-press::after,.mobile-nav a.is-press::after,.chat-btn.is-press::after{opacity:0!important}
 }
+
+/* v3 mục 5 — trang khoá theo cấp tài khoản: chỉ làm mờ mục nav, không đổi layout */
+.nav a.locked,.mobile-nav a.locked{opacity:.55}

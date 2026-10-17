@@ -3,13 +3,80 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0C0E12" />
+<meta name="color-scheme" content="dark" />
 <title>Sổ chung — Duy &amp; Nguyen</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='30' height='30' x='1' y='1' rx='8' fill='%23131519' stroke='%23C9A15F' stroke-opacity='.45'/%3E%3Crect x='9' y='12' width='14' height='2.5' rx='1.25' fill='%233FAF7D'/%3E%3Crect x='9' y='17.5' width='14' height='2.5' rx='1.25' fill='%23C96F4B'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="m.css?v=6" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="m.css?v=7" />
 </head>
 <body>
+
+<a class="skip-link" href="#main">Bỏ qua tới nội dung</a>
+
+<!-- ===== V4 · [U-08] Bộ biểu tượng SVG đơn nét nhúng sẵn ===== -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="ic-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1v-9.5z"/>
+  </symbol>
+  <symbol id="ic-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>
+  </symbol>
+  <symbol id="ic-scale" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3v18M5 7h14M5 7l-3 6h6l-3-6zM19 7l-3 6h6l-3-6zM8 21h8"/>
+  </symbol>
+  <symbol id="ic-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c0-3.1 2.9-5.5 6.5-5.5s6.5 2.4 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M17.5 14.5c2.4.4 4 2.1 4 4.5"/>
+  </symbol>
+  <symbol id="ic-more" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>
+  </symbol>
+  <symbol id="ic-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 5v14M5 12h14"/>
+  </symbol>
+  <symbol id="ic-user-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="9" cy="8" r="3.5"/><path d="M2.5 19.5c0-3.1 2.9-5.5 6.5-5.5s6.5 2.4 6.5 5.5"/><path d="M19 8v6M16 11h6"/>
+  </symbol>
+  <symbol id="ic-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19.5h16M7 16v-5M12 16V7M17 16v-8"/>
+  </symbol>
+  <symbol id="ic-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>
+  </symbol>
+  <symbol id="ic-piggy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 11a7 7 0 0 1 13.2-3.2L20 9.5v3l-1.6.8A6.8 6.8 0 0 1 16 16.5V19h-2.5v-1.5h-3V19H8v-2.2A7 7 0 0 1 5 11z"/><path d="M10.5 7.5h3"/><circle cx="15.5" cy="10.5" r=".75" fill="currentColor"/>
+  </symbol>
+  <symbol id="ic-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="5.5" width="18" height="13.5" rx="2.5"/><path d="M16 11.5h5v3h-5a1.5 1.5 0 0 1 0-3z"/><path d="M6 5.5l9-2v2"/>
+  </symbol>
+  <symbol id="ic-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12h4l2.5-6 5 12 2.5-6H21"/>
+  </symbol>
+  <symbol id="ic-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.08a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.08a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.08a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+  </symbol>
+  <symbol id="ic-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3l7.5 3v5.5c0 4.8-3.2 8.7-7.5 9.8-4.3-1.1-7.5-5-7.5-9.8V6L12 3z"/><path d="M9.5 12l2 2 3.5-3.5"/>
+  </symbol>
+  <symbol id="ic-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H8.5L4 21v-3H4a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 4 5.5z"/>
+  </symbol>
+  <symbol id="ic-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.8"/>
+  </symbol>
+  <symbol id="ic-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 3l18 18M10.6 10.6a2.8 2.8 0 0 0 3.9 3.9M9.4 5.8A9.8 9.8 0 0 1 12 5.5c6.5 0 10 6.5 10 6.5a16.8 16.8 0 0 1-3.2 4.1M6.2 6.2C3.6 8 2 12 2 12s3.5 6.5 10 6.5a9.9 9.9 0 0 0 4.5-1.1"/>
+  </symbol>
+  <symbol id="ic-inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 5h16l2 9v5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-5l2-9z"/><path d="M2 14h6l1.5 2.5h5L16 14h6"/>
+  </symbol>
+  <symbol id="ic-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3.5L2.8 19.5a1 1 0 0 0 .87 1.5h16.66a1 1 0 0 0 .87-1.5L12 3.5z"/><path d="M12 9.5v4.5M12 17h.01"/>
+  </symbol>
+</svg>
+<!-- ===== /V4 ===== -->
 
 <!-- ============ LOGIN ============ -->
 <div class="login-wrap" id="loginView">
@@ -18,14 +85,20 @@
       <div class="mark"><span></span></div>
       <h1>Sổ chung<small>Duy &amp; Nguyen</small></h1>
     </div>
-    <div id="loginErr"></div>
+    <div id="loginErr" role="alert" aria-live="polite"></div>
     <div class="field">
       <label for="u">Tên đăng nhập</label>
-      <input class="input" id="u" name="username" autocapitalize="none" autocomplete="username" spellcheck="false" />
+      <input class="input" id="u" name="username" autocapitalize="none" autocomplete="username" spellcheck="false" enterkeyhint="next" />
     </div>
     <div class="field">
       <label for="p">Mật khẩu</label>
-      <input class="input" id="p" name="password" type="password" autocomplete="current-password" />
+      <div class="pw-wrap">
+        <input class="input" id="p" name="password" type="password" autocomplete="current-password" enterkeyhint="go" />
+        <button class="pw-toggle" id="pwToggleBtn" type="button" data-act="toggleLoginPw" aria-label="Hiện mật khẩu">
+          <svg class="ic" width="18" height="18"><use href="#ic-eye"/></svg>
+        </button>
+      </div>
+      <div class="caps-warn" id="capsWarn" style="display:none">Đang bật phím Caps Lock</div>
     </div>
     <button class="btn primary wide" id="loginBtn" type="submit">Đăng nhập</button>
     <p class="hint">Chỉ tài khoản do quản trị viên cấp mới đăng nhập được. Không có đăng ký.</p>
@@ -37,36 +110,40 @@
   <aside class="side">
     <div class="brand">
       <div class="mark"><span></span></div>
-      <h1>Sổ chung<small id="sideBal">—</small></h1>
+      <h1>Sổ chung<small><span class="conn-dot on" id="connDot" title="Đã kết nối"></span><span id="sideBal">—</span></small></h1>
     </div>
-    <nav class="nav" id="nav"></nav>
+    <nav class="nav" id="nav" aria-label="Điều hướng chính"></nav>
     <div class="side-foot">
-      <button class="chat-btn" id="chatToggle" onclick="openChat()">
-        <span>Tin nhắn</span><span class="badge" id="chatBadge" style="display:none">0</span>
+      <button class="chat-btn" id="chatToggle" type="button" data-act="openChat" data-args="[]">
+        <span style="display:inline-flex;align-items:center;gap:8px"><svg class="ic" width="16" height="16"><use href="#ic-chat"/></svg>Tin nhắn</span>
+        <span class="badge" id="chatBadge" style="display:none">0</span>
       </button>
       <div class="who" style="margin-top:12px">
         <div class="avatar" id="meAv">–</div>
         <div><b id="meName">–</b><small id="meRole">–</small></div>
       </div>
-      <button class="btn sm wide" style="margin-top:10px" onclick="logout()">Đăng xuất</button>
+      <button class="btn sm wide" type="button" style="margin-top:10px" data-act="logout" data-args="[]">Đăng xuất</button>
     </div>
   </aside>
-  <main id="main"></main>
-  <nav class="mobile-nav" id="mnav"></nav>
-  <button class="chat-fab" id="chatFab" onclick="openChat()" aria-label="Tin nhắn">
-    ✉<span class="badge" id="chatBadgeFab" style="display:none">0</span>
+  <main id="main" tabindex="-1"></main>
+  <nav class="mobile-nav" id="mnav" aria-label="Điều hướng di động"></nav>
+  <button class="chat-fab" id="chatFab" type="button" data-act="openChat" data-args="[]" aria-label="Tin nhắn">
+    <svg class="ic" width="22" height="22"><use href="#ic-chat"/></svg>
+    <span class="badge" id="chatBadgeFab" style="display:none">0</span>
   </button>
 </div>
 
 <div id="modalRoot"></div>
 <div id="chatRoot"></div>
-<div id="toastRoot"></div>
+<div id="toastRoot" role="status" aria-live="polite"></div>
 
 <script type="module">
-  // Kết nối thật vào Firebase Realtime Database — đây là nơi Store trong m.js
-  // sẽ đọc/ghi dữ liệu, thay vì chỉ dùng localStorage của từng máy.
+  /* ===== V4 · [K1] Adapter Firebase v2 ===== */
+  // Kết nối thật vào Firebase Realtime Database — giữ nguyên 100% firebaseConfig
+  // và API cũ (doc().set/get/delete, collection().onSnapshot), đồng thời bổ sung
+  // update, transaction, multi, onConnection, serverOffset, FIREBASE_READY.
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
-  import { getDatabase, ref, set, get, remove, onValue }
+  import { getDatabase, ref, set, get, remove, onValue, update, runTransaction }
     from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
   const firebaseConfig = {
@@ -80,35 +157,78 @@
     measurementId: "G-C27MKKBNPL"
   };
 
-  const app = initializeApp(firebaseConfig);
-  const rtdb = getDatabase(app);
+  try {
+    const app = initializeApp(firebaseConfig);
+    const rtdb = getDatabase(app);
+    let _offset = 0;
+    let _connected = true;
 
-  // Adapter có cùng "hình dạng" mà Store trong m.js đang mong đợi
-  // (doc().set/get/delete, collection().onSnapshot) — nhờ vậy không cần
-  // sửa lại toàn bộ logic đọc/ghi trong m.js.
-  window.FIREBASE_STORE = {
-    doc(path){
-      const r = ref(rtdb, path);
-      return {
-        async set(data){ await set(r, data); },
-        async get(){ const snap = await get(r); return { exists: snap.exists(), data: snap.val() }; },
-        async delete(){ await remove(r); }
-      };
-    },
-    collection(path){
-      const r = ref(rtdb, path);
-      return {
-        onSnapshot(cb, errCb){
-          return onValue(r, snap => {
-            const val = snap.val() || {};
-            cb({ docs: Object.entries(val).map(([id, data]) => ({ id, data })) });
-          }, err => { if (errCb) errCb(err); });
-        }
-      };
-    }
-  };
+    onValue(ref(rtdb, '.info/serverTimeOffset'), s => {
+      const v = s.val();
+      _offset = typeof v === 'number' && Number.isFinite(v) ? v : 0;
+    }, () => {});
+
+    onValue(ref(rtdb, '.info/connected'), s => {
+      _connected = !!s.val();
+    }, () => {});
+
+    window.FIREBASE_STORE = {
+      doc(path){
+        const r = ref(rtdb, path);
+        return {
+          async set(data){ await set(r, data); },
+          async get(){ const snap = await get(r); return { exists: snap.exists(), data: snap.val() }; },
+          async delete(){ await remove(r); },
+          async update(part){ await update(r, part); },
+          async transaction(fn){
+            const res = await runTransaction(r, fn, { applyLocally: false });
+            return {
+              committed: !!res.committed,
+              exists: res.snapshot ? res.snapshot.exists() : false,
+              data: res.snapshot ? res.snapshot.val() : null
+            };
+          }
+        };
+      },
+      collection(path){
+        const r = ref(rtdb, path);
+        return {
+          onSnapshot(cb, errCb){
+            return onValue(r, snap => {
+              const val = snap.val() || {};
+              cb({ docs: Object.entries(val).map(([id, data]) => ({ id, data })) });
+            }, err => { if (errCb) errCb(err); });
+          }
+        };
+      },
+      async multi(map){
+        await update(ref(rtdb), map);
+      },
+      onConnection(cb){
+        return onValue(ref(rtdb, '.info/connected'), s => cb(!!s.val()), () => cb(false));
+      },
+      isConnected(){ return _connected; },
+      serverOffset(){ return _offset; }
+    };
+    window.FIREBASE_READY = Promise.resolve(true);
+  } catch (err) {
+    console.error('Firebase init failed:', err);
+    window.FIREBASE_ERROR = err;
+    window.FIREBASE_READY = Promise.resolve(false);
+  }
+  /* ===== /V4 ===== */
 </script>
-<script src="m.js?v=10" defer></script>
+<script src="m.js?v=11" defer></script>
+<script>
+  /* ===== V4 · [11.1] Chỉ nạp selftest.js khi URL có ?selftest=1 ===== */
+  if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('selftest') === '1') {
+    window.addEventListener('DOMContentLoaded', function(){
+      var s = document.createElement('script');
+      s.src = 'selftest.js?v=11';
+      document.body.appendChild(s);
+    });
+  }
+</script>
 
 </body>
 </html>
